@@ -2,6 +2,8 @@
 
 Candy-charged QiX-style beta, built to run with zero setup.
 
+![DopaQiX front page](./docs/frontpage.png)
+
 ## Play
 
 Extract [`CodexQiX-beta-static-v15.zip`](./CodexQiX-beta-static-v15.zip) and double-click `index.html`.
