@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodexQiX</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="stage-panel">
+      <header class="hud">
+        <div class="metric">
+          <span class="metric-label">Score</span>
+          <span class="metric-value hot" id="score-readout">000000</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">High</span>
+          <span class="metric-value" id="highscore-readout">000000</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Level</span>
+          <span class="metric-value cyan" id="level-readout">01</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Lives</span>
+          <span class="metric-value" id="lives">3</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Claimed</span>
+          <span class="metric-value" id="claimed">0%</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Goal</span>
+          <span class="metric-value" id="required-readout">64%</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Burst</span>
+          <span class="metric-value" id="streak-readout">10%</span>
+        </div>
+      </header>
+
+      <section class="board-shell board-wrap">
+        <div class="power-rail" aria-hidden="true">
+          <span class="power-fill"></span>
+        </div>
+        <div class="image-layer" id="image-layer" aria-hidden="true"></div>
+        <div class="image-grain" id="image-grain" aria-hidden="true"></div>
+        <div class="reveal-spotlight" id="reveal-spotlight" aria-hidden="true">
+          <div class="reveal-frame">
+            <img id="reveal-image" alt="Level reveal reward">
+          </div>
+        </div>
+        <canvas id="game-board" width="800" height="600" aria-label="CodexQiX game board"></canvas>
+        <div class="overlay" id="overlay">
+          <div class="overlay-card">
+            <p class="overlay-kicker">DopaQiX</p>
+            <p id="message">Hold Space on the rail to cut into open space. Claim hard. Get greedy. Do not die.</p>
+            <button id="start-button" type="button">Start Run</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="sidebar">
+      <section class="brand">
+        <h2 class="candy-title" aria-label="DopaQiX">
+          <span style="--c:#ff6b8a;--r:-7deg;">D</span><span style="--c:#ffb347;--r:4deg;">o</span><span style="--c:#ffe066;--r:-3deg;">p</span><span style="--c:#72f1b8;--r:6deg;">a</span><span style="--c:#74c0fc;--r:-6deg;">Q</span><span style="--c:#c77dff;--r:5deg;">i</span><span style="--c:#ff8fab;--r:-4deg;">X</span>
+        </h2>
+      </section>
+
+      <section class="panel-block">
+        <p class="section-label">Beta Controls</p>
+        <label class="setting check-row" for="cheat-setting">
+          <span>Cheat mode <small>Slow enemies way down</small></span>
+          <input id="cheat-setting" type="checkbox">
+        </label>
+        <label class="setting check-row" for="music-setting">
+          <span>Music <small>On or off</small></span>
+          <input id="music-setting" type="checkbox" checked>
+        </label>
+        <label class="setting" for="speed-setting">
+          <span>Speed <strong id="speed-value">2</strong></span>
+          <input id="speed-setting" type="range" min="1" max="10" step="1" value="2">
+        </label>
+        <label class="setting setting-button" for="magic-setting">
+          <span>Magic</span>
+          <button id="magic-setting" type="button" class="toggle-pill">More Magic</button>
+        </label>
+        <label class="setting" for="type-setting">
+          <span>Reveal Pool</span>
+          <select id="type-setting">
+            <option value="random">Random</option>
+            <option value="funny">Funny</option>
+            <option value="aww" selected>Aww</option>
+            <option value="pinup">Pinup</option>
+          </select>
+        </label>
+        <label class="setting" for="volume-setting">
+          <span>Volume <strong id="volume-readout">70%</strong></span>
+          <input id="volume-setting" type="range" min="0" max="100" step="1" value="70">
+        </label>
+      </section>
+
+      <section class="panel-block">
+        <p class="section-label">Controls</p>
+        <p class="controls">
+          WASD or arrows: Move<br>
+          Space: Start cut / continue<br>
+          Shift: Fast risky carve<br>
+          P: Pause
+        </p>
+      </section>
+
+      <section class="panel-block">
+        <p class="section-label">Pickups</p>
+        <div class="pickup-legend">
+          <div class="legend-row">
+            <span class="legend-icon bomb">Bomb</span>
+            <span>Slow 10s</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-icon heart">Heart</span>
+            <span>+1 life</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-icon cookie">Muffin</span>
+            <span>Speed boost</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-icon shield">Shield</span>
+            <span>Immune 10s</span>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+  </main>
+  <script type="application/json" id="qix-background-manifest">
+[
+  "pup1.jpg",
+  "pup2.jpg",
+  "pup3.jpg",
+  "pup4.jpg",
+  "pup5.jpg",
+  "pup6.jpg",
+  "funny1.jpg",
+  "funny2.jpg",
+  "funny3.jpg",
+  "funny4.jpg",
+  "funny5.jpg",
+  "funny6.jpg",
+  "pinup1.jpg",
+  "pinup2.jpg",
+  "pinup3.jpg",
+  "pinup4.jpg",
+  "pinup5.jpg",
+  "pinup6.jpg"
+]
+  </script>
+  <script src="script.js" defer></script>
+</body>
+</html>
