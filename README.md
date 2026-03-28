@@ -19,4 +19,4 @@ You can also open the project-root [`index.html`](./index.html) directly.
 ## Notes
 
 - Root static files are the current source of truth
-- Older Vite/Pixi experiment files are still in the repo, but not required to play the beta
+- `ship/` is kept in sync for zip packaging
