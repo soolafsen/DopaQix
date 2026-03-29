@@ -4,11 +4,20 @@ Candy-charged QiX-style beta, built to run with zero setup.
 
 ![DopaQiX front page](./docs/frontpage.png)
 
-## Play
+## Get The Game
 
-Extract [`CodexQiX-beta-static-v15.zip`](./CodexQiX-beta-static-v15.zip) and double-click `index.html`.
+[Download DopaQiX ZIP](https://github.com/soolafsen/DopaQix/raw/refs/heads/main/CodexQiX-beta-static-v15.zip)
 
-You can also open the project-root [`index.html`](./index.html) directly.
+## How To Play
+
+1. Click **Download DopaQiX ZIP** above.
+2. Open your `Downloads` folder.
+3. Double-click `CodexQiX-beta-static-v15.zip`.
+4. Extract or unzip the folder.
+5. Open the extracted folder.
+6. Double-click `index.html` to start the game.
+
+If Windows asks which app to use, choose your web browser.
 
 ## Current Beta
 
