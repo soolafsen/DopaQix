@@ -28,6 +28,5 @@ More detail lives in [docs/development.md](./docs/development.md).
 
 ## Notes
 
-- The legacy browser prototype remains in the repo as reference material.
 - The native Godot project at the repo root is now the shipping source of truth.
 - Ralph tracking for this migration lives in `.agents/tasks/prd-dopaqix-native.json`.

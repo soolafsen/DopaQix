@@ -6,6 +6,9 @@ playwright-report/
 test-results/
 .godot/
 _vendor/
+ship/
+src/
+tests/
 *.import
 *.uid
 !dist/
