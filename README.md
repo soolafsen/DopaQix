@@ -4,8 +4,8 @@ Native Godot 4 Windows build of DopaQix, rebuilt for louder combat feedback, ani
 
 ## Play
 
-1. Go to the latest release for this branch.
-2. Download `DopaQiXNative-win64.zip`.
+1. Download [DopaQiXNative-win64.zip](./dist/DopaQiXNative-win64.zip).
+2. Open your `Downloads` folder or the saved location.
 3. Unzip it anywhere.
 4. Double-click `DopaQiXNative.exe`.
 

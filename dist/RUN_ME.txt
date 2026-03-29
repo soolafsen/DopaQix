@@ -1,0 +1,7 @@
+DopaQiX Native
+
+1. Double-click DopaQiXNative.exe
+2. Move with WASD or the arrow keys
+3. Cut into the field and close your trail to claim territory
+4. Press Space or Enter to start or continue
+5. Press Esc or P to pause

@@ -8,3 +8,7 @@ test-results/
 _vendor/
 *.import
 *.uid
+!dist/
+dist/*
+!dist/DopaQiXNative-win64.zip
+!dist/RUN_ME.txt
