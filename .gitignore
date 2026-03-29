@@ -4,3 +4,7 @@ dist/
 .ralph/
 playwright-report/
 test-results/
+.godot/
+_vendor/
+*.import
+*.uid

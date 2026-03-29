@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "project": "DopaQiX Native",
+  "overview": "Rebuild the existing DopaQix browser prototype as a native Godot 4 Windows arcade game with a stronger audiovisual identity, animated player and enemy presentation, readable but high-energy buffs and debuffs, and a zip-first export flow that a non-technical player can launch by double-clicking an .exe.",
+  "goals": [
+    "Ship a playable native QiX-style loop with rail movement, trail cutting, area capture, sparks, and QiX enemies.",
+    "Raise the juice level with better character rendering, particles, flashes, pickup presentation, and reactive audio.",
+    "Produce an easy Windows export and zip flow modeled after CodexBreakout."
+  ],
+  "nonGoals": [
+    "Do not preserve the browser runtime or double-click index.html delivery as the shipping path.",
+    "Do not aim for one-to-one DOM or canvas parity when Godot-native presentation can improve the result."
+  ],
+  "qualityGates": [
+    "godot --headless --path . --quit-after 1",
+    "powershell -ExecutionPolicy Bypass -File .\\scripts\\export-windows.ps1"
+  ],
+  "openQuestions": [
+    "Assume the existing background image set remains available as optional revealed board art in the native build.",
+    "Assume a strong vertical slice with escalating levels is the right first native milestone instead of full feature parity with every browser prototype knob."
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Build the native Godot gameplay foundation",
+      "status": "done",
+      "dependsOn": [],
+      "description": "Create a self-contained Godot project in the repo root with the core DopaQix loop: rail movement, trail drawing, flood-fill capture, QiX enemies in the field, rail sparks, lives, score, and level progression.",
+      "acceptanceCriteria": [
+        "The game boots in Godot and supports starting a run, moving along the rail, cutting into the field, and claiming territory by reconnecting to safe rail.",
+        "Example: a player can survive sparks and at least one QiX enemy long enough to capture area and clear the opening board.",
+        "Negative case: self-crossing the trail or letting an enemy touch the active trail costs a life instead of corrupting the board state."
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "Push visual and pickup payoff",
+      "status": "done",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "Layer stronger presentation on top of the core loop with stylized player and enemy visuals, reactive background treatment, particles, flashes, floating score text, procedural music, punchier sound effects, and pickups or debuffs that are easy to read and feel rewarding or threatening.",
+      "acceptanceCriteria": [
+        "Enemies, player movement, captures, deaths, and pickups all have visible feedback beyond plain tile changes.",
+        "Example: collecting a positive pickup creates a distinct audiovisual surge, while a negative pickup feels dangerous immediately through color, motion, or sound.",
+        "Negative case: the board remains readable during high-action moments and effects do not hide the trail or safe rail."
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Package a non-technical Windows handoff",
+      "status": "done",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ],
+      "description": "Mirror CodexBreakout's Windows packaging approach with a reproducible export preset, an export script that can fetch templates when missing, and updated docs that point players to a zip containing an executable and simple instructions.",
+      "acceptanceCriteria": [
+        "Running the export script creates a Windows executable in dist and a matching win64 zip with a plain-language run note.",
+        "Example: a tester can unzip the package and start the game by double-clicking the exported executable.",
+        "Negative case: the export path fails fast with a clear error if Godot is missing or export templates cannot be resolved."
+      ]
+    }
+  ]
+}
