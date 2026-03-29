@@ -124,6 +124,9 @@ var danger_player: AudioStreamPlayer
 var sfx_players := []
 var sfx_index := 0
 var audio_streams := {}
+var pause_button: Button
+var resume_button: Button
+var exit_button: Button
 
 
 func _ready() -> void:
@@ -133,6 +136,7 @@ func _ready() -> void:
 	_load_backgrounds()
 	_ensure_input_actions()
 	_build_audio()
+	_build_ui()
 	_load_progress()
 	_reset_run_state()
 	queue_redraw()
@@ -151,6 +155,8 @@ func _process(delta: float) -> void:
 
 	_update_effects(delta)
 	_update_audio_mix()
+	_layout_ui()
+	_refresh_ui()
 
 	match state_name:
 		"title":
@@ -210,6 +216,11 @@ func _toggle_pause() -> void:
 		status_message = ""
 		_play_sfx("start")
 	state_timer = 0.0
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		_layout_ui()
 
 
 func _start_game() -> void:
@@ -1165,6 +1176,98 @@ func _save_progress() -> void:
 	config.save(SAVE_PATH)
 
 
+func _build_ui() -> void:
+	pause_button = _make_ui_button("Pause", Color("ffd86b"), Color("5c1b3a"))
+	pause_button.pressed.connect(_on_pause_button_pressed)
+	add_child(pause_button)
+
+	resume_button = _make_ui_button("Resume", Color("83fff1"), Color("11344d"))
+	resume_button.pressed.connect(_on_resume_button_pressed)
+	add_child(resume_button)
+
+	exit_button = _make_ui_button("Exit Game", Color("ff7ca8"), Color("4d102c"))
+	exit_button.pressed.connect(_on_exit_button_pressed)
+	add_child(exit_button)
+
+
+func _make_ui_button(label: String, fill: Color, font_color: Color) -> Button:
+	var button := Button.new()
+	button.text = label
+	button.custom_minimum_size = Vector2(150.0, 42.0)
+	button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_color_override("font_color", font_color)
+	button.add_theme_color_override("font_hover_color", font_color)
+	button.add_theme_color_override("font_pressed_color", font_color)
+	button.add_theme_color_override("font_disabled_color", _with_alpha(font_color, 0.5))
+
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = fill
+	normal.border_color = _with_alpha(Color.WHITE, 0.32)
+	normal.border_width_left = 2
+	normal.border_width_top = 2
+	normal.border_width_right = 2
+	normal.border_width_bottom = 2
+	normal.corner_radius_top_left = 18
+	normal.corner_radius_top_right = 18
+	normal.corner_radius_bottom_left = 18
+	normal.corner_radius_bottom_right = 18
+	normal.shadow_color = _with_alpha(Color("2b0d1b"), 0.32)
+	normal.shadow_size = 5
+
+	var hover := normal.duplicate()
+	hover.bg_color = fill.lightened(0.08)
+
+	var pressed := normal.duplicate()
+	pressed.bg_color = fill.darkened(0.08)
+
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("focus", hover)
+	return button
+
+
+func _layout_ui() -> void:
+	if pause_button != null:
+		pause_button.position = Vector2(size.x - 174.0, 36.0)
+
+	if state_name == "title":
+		if exit_button != null:
+			exit_button.position = Vector2(396.0, 306.0)
+	elif state_name == "paused":
+		if resume_button != null:
+			resume_button.position = Vector2(size.x * 0.5 - 160.0, size.y * 0.5 + 22.0)
+		if exit_button != null:
+			exit_button.position = Vector2(size.x * 0.5 + 10.0, size.y * 0.5 + 22.0)
+	elif state_name == "game_over":
+		if exit_button != null:
+			exit_button.position = Vector2(size.x * 0.5 - 75.0, size.y * 0.5 + 82.0)
+
+
+func _refresh_ui() -> void:
+	if pause_button != null:
+		pause_button.visible = state_name == "playing"
+	if resume_button != null:
+		resume_button.visible = state_name == "paused"
+	if exit_button != null:
+		exit_button.visible = state_name in ["title", "paused", "game_over"]
+
+
+func _on_pause_button_pressed() -> void:
+	if state_name == "playing":
+		_toggle_pause()
+
+
+func _on_resume_button_pressed() -> void:
+	if state_name == "paused":
+		_toggle_pause()
+
+
+func _on_exit_button_pressed() -> void:
+	_save_progress()
+	get_tree().quit()
+
+
 func _draw() -> void:
 	_draw_backdrop()
 	_draw_board()
@@ -1174,7 +1277,8 @@ func _draw() -> void:
 	_draw_pickups()
 	_draw_player()
 	_draw_floaters()
-	_draw_hud()
+	if state_name != "title":
+		_draw_hud()
 	_draw_overlay()
 	if flash_strength > 0.0:
 		var overlay := flash_color
@@ -1184,33 +1288,47 @@ func _draw() -> void:
 
 func _draw_backdrop() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), _theme_color("bg_a"), true)
-	for band in range(14):
-		var t := float(band) / 13.0
+	var title_mode := state_name == "title"
+	for band in range(10):
+		var t := float(band) / 9.0
 		var y := lerpf(0.0, size.y, t)
-		var color := _theme_color("bg_a").lerp(_theme_color("bg_b"), t).lerp(_theme_color("bg_c"), 0.25)
-		color.a = 0.92
-		draw_rect(Rect2(Vector2(0.0, y), Vector2(size.x, size.y / 13.0 + 3.0)), color, true)
+		var color := _theme_color("bg_a").lerp(_theme_color("bg_b"), t).lerp(_theme_color("bg_c"), 0.24 if title_mode else 0.16)
+		color.a = 0.96
+		draw_rect(Rect2(Vector2(0.0, y), Vector2(size.x, size.y / 9.0 + 4.0)), color, true)
 
-	for blob in range(8):
-		var wobble := title_phase * (0.14 + blob * 0.03)
+	for blob in range(5):
+		var wobble := title_phase * (0.12 + blob * 0.028)
 		var center := Vector2(
-			150.0 + blob * 185.0 + sin(wobble * 1.4 + blob) * 84.0,
+			220.0 + blob * 285.0 + sin(wobble * 1.4 + blob) * 64.0,
 			90.0 + fmod(blob * 112.0 + title_phase * 22.0, size.y + 180.0)
 		)
 		var glow := _theme_color("bg_c")
-		glow.a = 0.09
-		draw_circle(center, 72.0 + sin(wobble) * 26.0, glow)
+		glow.a = 0.07
+		draw_circle(center, 84.0 + sin(wobble) * 22.0, glow)
 
-	for stripe in range(18):
-		var offset := fmod(title_phase * 110.0 + stripe * 96.0, size.x + 260.0) - 130.0
+	for stripe in range(14):
+		var offset := fmod(title_phase * 88.0 + stripe * 138.0, size.x + 260.0) - 130.0
 		var stripe_color := _theme_color("rail")
-		stripe_color.a = 0.11 + danger_level * 0.08
+		stripe_color.a = 0.06 + danger_level * 0.04
 		draw_line(
 			Vector2(offset, BOARD_RECT.position.y - 110.0),
 			Vector2(offset + 210.0, BOARD_RECT.end.y + 100.0),
 			stripe_color,
-			2.0
+			1.5
 		)
+	if title_mode:
+		for candy in range(9):
+			var x := 90.0 + candy * 210.0 + sin(title_phase * 0.8 + candy) * 24.0
+			var y := 88.0 + fmod(110.0 * candy + title_phase * 18.0, size.y - 120.0)
+			var candy_palette: Array = [
+				Color("ff75c8"),
+				Color("6ff7ff"),
+				Color("ffe066"),
+				Color("ff9f68")
+			]
+			var candy_color: Color = candy_palette[candy % 4]
+			draw_circle(Vector2(x, y), 18.0 + (candy % 3) * 4.0, _with_alpha(candy_color, 0.14))
+			draw_circle(Vector2(x, y), 9.0 + (candy % 2) * 2.0, _with_alpha(Color.WHITE, 0.18))
 
 
 func _draw_board() -> void:
@@ -1240,6 +1358,9 @@ func _draw_board() -> void:
 
 	draw_rect(_shift_rect(board, camera_offset * 0.18), _with_alpha(_theme_color("rail"), 0.46), false, 3.0)
 	draw_rect(_shift_rect(board.grow(-12.0), camera_offset * 0.08), _with_alpha(_theme_color("rail"), 0.07), false, 2.0)
+	if state_name == "title":
+		_draw_candy_frame(board)
+		draw_rect(board, Color(0, 0, 0, 0.22), true)
 
 
 func _draw_player() -> void:
@@ -1348,55 +1469,77 @@ func _draw_floaters() -> void:
 
 
 func _draw_hud() -> void:
-	var left_x := 78.0
-	var top_y := 82.0
-	_draw_label(Vector2(left_x, top_y), "DopaQiX Native", 42, Color("fff5dc"))
-	_draw_label(Vector2(left_x, top_y + 42), current_theme.get("name", "Arcade"), 22, Color("b9fbff"))
-	_draw_label(Vector2(left_x, top_y + 86), "Score  %08d" % score, 30, Color("ffe680"))
-	_draw_label(Vector2(left_x, top_y + 118), "Hi     %08d" % high_score, 20, Color("ffffff"))
-	_draw_label(Vector2(left_x, top_y + 172), "Lives  %d" % lives, 26, Color("ffe9d1"))
-	_draw_label(Vector2(left_x, top_y + 206), "Level  %d / %d" % [level, FINAL_LEVEL], 22, Color("d7e9ff"))
-	_draw_label(Vector2(left_x, top_y + 238), "Claim  %d%% / %d%%" % [int(capture_percent), capture_goal], 22, Color("c8ffda"))
+	var left_panel := Rect2(Vector2(34.0, 34.0), Vector2(208.0, 208.0))
+	_draw_panel(left_panel, Color("0b1220", 0.64), _with_alpha(_theme_color("rail"), 0.22))
+	_draw_label(left_panel.position + Vector2(18.0, 34.0), current_theme.get("name", "Arcade"), 18, Color("b9fbff"))
+	_draw_label(left_panel.position + Vector2(18.0, 74.0), "Score", 16, Color("ffe0a6"))
+	_draw_label(left_panel.position + Vector2(18.0, 106.0), "%08d" % score, 28, Color("fff3d1"))
+	_draw_label(left_panel.position + Vector2(18.0, 136.0), "Hi %08d" % high_score, 16, Color("d8eaff"))
+	_draw_label(left_panel.position + Vector2(18.0, 172.0), "Lives %d   Level %d/%d" % [lives, level, FINAL_LEVEL], 16, Color("ffe9d1"))
+	_draw_label(left_panel.position + Vector2(18.0, 198.0), "Claim %d%% / %d%%" % [int(capture_percent), capture_goal], 16, Color("c8ffda"))
 
 	var effects := []
 	for key in ["rush", "shield", "hex"]:
 		if _effect_active(key):
 			effects.append("%s %.0fs" % [PICKUP_META[key]["title"], ceil(active_effects[key])])
-	_draw_label(Vector2(left_x, top_y + 288), "Effects", 22, Color("fff3bf"))
-	_draw_label(Vector2(left_x, top_y + 316), "None" if effects.is_empty() else " | ".join(effects), 18, Color("c8f7ff"))
+	var effect_panel := Rect2(Vector2(34.0, 258.0), Vector2(208.0, 86.0))
+	_draw_panel(effect_panel, Color("0b1220", 0.52), _with_alpha(_theme_color("trail_b"), 0.18))
+	_draw_label(effect_panel.position + Vector2(18.0, 30.0), "Effects", 16, Color("fff3bf"))
+	_draw_label(effect_panel.position + Vector2(18.0, 60.0), "None" if effects.is_empty() else " | ".join(effects), 14, Color("c8f7ff"))
 
-	var right_x := size.x - 360.0
-	_draw_label(Vector2(right_x, top_y), "Controls", 30, Color("fff5dc"))
-	_draw_label(Vector2(right_x, top_y + 40), "WASD / Arrows  Move", 20, Color("dff7ff"))
-	_draw_label(Vector2(right_x, top_y + 66), "Space / Enter  Start or Continue", 20, Color("dff7ff"))
-	_draw_label(Vector2(right_x, top_y + 92), "Esc / P  Pause", 20, Color("dff7ff"))
-	_draw_label(Vector2(right_x, top_y + 118), "M  Toggle Music", 20, Color("dff7ff"))
+	var utility_panel := Rect2(Vector2(size.x - 270.0, 34.0), Vector2(236.0, 58.0))
+	_draw_panel(utility_panel, Color("0b1220", 0.5), _with_alpha(_theme_color("rail"), 0.18))
+	_draw_label(utility_panel.position + Vector2(18.0, 36.0), "Move WASD   Pause P   Music M", 15, Color("dff7ff"))
 
 	if status_message != "":
-		_draw_label(Vector2(right_x, top_y + 176), status_message, 20, Color("ffcfaa"))
+		var status_panel := Rect2(Vector2(size.x - 350.0, 110.0), Vector2(316.0, 54.0))
+		_draw_panel(status_panel, Color("220d13", 0.52), _with_alpha(Color("ff9d7a"), 0.18))
+		_draw_label(status_panel.position + Vector2(18.0, 34.0), status_message, 16, Color("ffcfaa"))
 	if banner_timer > 0.0:
-		_draw_centered_label(Vector2(size.x * 0.5, 92.0), banner_text, 34, Color("fff6bf"))
+		var banner_rect := Rect2(Vector2(BOARD_RECT.position.x + 110.0, 34.0), Vector2(BOARD_RECT.size.x - 220.0, 56.0))
+		_draw_panel(banner_rect, Color("0b1220", 0.42), _with_alpha(_theme_color("trail_a"), 0.15))
+		_draw_centered_label(Vector2(banner_rect.get_center().x, banner_rect.position.y + 37.0), banner_text, 24, Color("fff6bf"))
 
 
 func _draw_overlay() -> void:
 	if state_name == "title":
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.16), PROJECT_TITLE, 66, Color("ffffff"))
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.22), "Native Godot overload with glowing QiX fights, neon cuts, and pickup spikes.", 22, Color("e5faff"))
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.84), "Press Space or Enter to start", 28, Color("ffe46a"))
+		var marquee := Rect2(Vector2(54.0, 52.0), Vector2(560.0, 310.0))
+		_draw_panel(marquee, Color("5b184f", 0.72), _with_alpha(Color("ffd86b"), 0.52))
+		draw_rect(Rect2(marquee.position + Vector2(16.0, 16.0), Vector2(marquee.size.x - 32.0, 10.0)), _with_alpha(Color("fff8cb"), 0.25), true)
+		_draw_shadowed_label(marquee.position + Vector2(28.0, 104.0), "DopaQiX", 76, Color("4a103a", 0.95), Color("fff6d8"))
+		_draw_shadowed_label(marquee.position + Vector2(34.0, 154.0), "Native", 38, Color("2a5f7a", 0.92), Color("84f8ff"))
+		_draw_label(marquee.position + Vector2(30.0, 200.0), "A neon candy-cabinet invitation to make risky cuts", 22, Color("fff4da"))
+		_draw_label(marquee.position + Vector2(30.0, 230.0), "and steal the whole board before the sparks corner you.", 22, Color("fff4da"))
+		var cta := Rect2(marquee.position + Vector2(28.0, 252.0), Vector2(324.0, 40.0))
+		_draw_panel(cta, Color("ffcf5b", 0.92), _with_alpha(Color("ff5fa2"), 0.68))
+		_draw_centered_label(Vector2(cta.get_center().x, cta.position.y + 28.0), "PRESS SPACE OR ENTER TO START", 20, Color("6f1b39"))
+		var info := Rect2(Vector2(size.x - 348.0, 74.0), Vector2(294.0, 172.0))
+		_draw_panel(info, Color("143860", 0.64), _with_alpha(Color("88fff7"), 0.36))
+		_draw_label(info.position + Vector2(20.0, 34.0), "Catch The Eye", 22, Color("fff6c4"))
+		_draw_label(info.position + Vector2(20.0, 68.0), "WASD or Arrows to move", 18, Color("effcff"))
+		_draw_label(info.position + Vector2(20.0, 96.0), "Reconnect to claim the field", 18, Color("effcff"))
+		_draw_label(info.position + Vector2(20.0, 124.0), "Rush helps. Hex bombs punish greed.", 18, Color("effcff"))
+		_draw_label(info.position + Vector2(20.0, 152.0), "P pauses   |   M music", 18, Color("ffe58f"))
 	elif state_name == "paused":
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.44), "PAUSED", 52, Color("fff7dd"))
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.49), "Press Esc or P to resume", 22, Color("dff7ff"))
+		var modal := Rect2(Vector2(size.x * 0.5 - 210.0, size.y * 0.5 - 78.0), Vector2(420.0, 156.0))
+		_draw_panel(modal, Color("09101b", 0.78), _with_alpha(_theme_color("rail"), 0.22))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 58.0), "PAUSED", 42, Color("fff7dd"))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 102.0), "Press Esc or P to resume", 20, Color("dff7ff"))
 	elif state_name == "death":
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.46), "CRASH", 50, Color("fff0dc"))
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.51), status_message, 20, Color("ffd0c0"))
+		var modal := Rect2(Vector2(size.x * 0.5 - 220.0, size.y * 0.5 - 74.0), Vector2(440.0, 148.0))
+		_draw_panel(modal, Color("220d13", 0.8), _with_alpha(Color("ff8c73"), 0.22))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 54.0), "CRASH", 40, Color("fff0dc"))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 96.0), status_message, 18, Color("ffd0c0"))
 	elif state_name == "game_over":
+		var modal := Rect2(Vector2(size.x * 0.5 - 250.0, size.y * 0.5 - 100.0), Vector2(500.0, 200.0))
+		_draw_panel(modal, Color("09101b", 0.84), _with_alpha(_theme_color("rail"), 0.2))
 		if run_won:
-			_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.42), "SYSTEM OVERLOADED", 54, Color("fff7d8"))
-			_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.47), "You own the board.", 22, Color("dffcff"))
+			_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 64.0), "SYSTEM OVERLOADED", 42, Color("fff7d8"))
+			_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 106.0), "You own the board.", 20, Color("dffcff"))
 		else:
-			_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.42), "GAME OVER", 54, Color("fff7d8"))
-			_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.47), status_message if status_message != "" else "The board bit back.", 22, Color("ffd4c4"))
-		_draw_centered_label(Vector2(size.x * 0.5, size.y * 0.54), "Press Space or Enter to run it again", 24, Color("ffe46a"))
+			_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 64.0), "GAME OVER", 42, Color("fff7d8"))
+			_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 106.0), status_message if status_message != "" else "The board bit back.", 20, Color("ffd4c4"))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 152.0), "Press Space or Enter to run it again", 20, Color("ffe46a"))
 
 
 func _draw_label(position: Vector2, text: String, font_size: int, color: Color) -> void:
@@ -1406,3 +1549,28 @@ func _draw_label(position: Vector2, text: String, font_size: int, color: Color) 
 func _draw_centered_label(position: Vector2, text: String, font_size: int, color: Color) -> void:
 	var width := ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
 	draw_string(ThemeDB.fallback_font, position - Vector2(width * 0.5, 0.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, color)
+
+
+func _draw_shadowed_label(position: Vector2, text: String, font_size: int, shadow: Color, fill: Color) -> void:
+	_draw_label(position + Vector2(5.0, 5.0), text, font_size, shadow)
+	_draw_label(position, text, font_size, fill)
+
+
+func _draw_panel(rect: Rect2, fill: Color, stroke: Color) -> void:
+	draw_rect(rect, fill, true)
+	draw_rect(rect, stroke, false, 2.0)
+	draw_rect(rect.grow(-8.0), _with_alpha(stroke, stroke.a * 0.28), false, 1.0)
+
+
+func _draw_candy_frame(board: Rect2) -> void:
+	var frame := board.grow(24.0)
+	draw_rect(frame, _with_alpha(Color("ff5fa2"), 0.32), true)
+	draw_rect(frame.grow(-8.0), _with_alpha(Color("6df8ff"), 0.24), true)
+	draw_rect(frame, _with_alpha(Color("ffe476"), 0.46), false, 4.0)
+	draw_rect(frame.grow(-10.0), _with_alpha(Color("ff7cb8"), 0.44), false, 3.0)
+	for index in range(18):
+		var px := frame.position.x + 22.0 + index * ((frame.size.x - 44.0) / 17.0)
+		var top_color := Color("ffe66d") if index % 2 == 0 else Color("76faff")
+		var bottom_color := Color("ff8ec6") if index % 2 == 0 else Color("fff4cf")
+		draw_circle(Vector2(px, frame.position.y + 12.0), 4.5, top_color)
+		draw_circle(Vector2(px, frame.end.y - 12.0), 4.5, bottom_color)
