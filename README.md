@@ -12,8 +12,8 @@ Candy-charged QiX-style beta, built to run with zero setup.
 
 1. Click **Download DopaQiX ZIP** above.
 2. Open your `Downloads` folder.
-3. Double-click `CodexQiX-beta-static-v15.zip`.
-4. Extract or unzip the folder.
+3. Find `CodexQiX-beta-static-v15.zip`.
+4. Extract or unzip it with Windows or a tool like 7-Zip.
 5. Open the extracted folder.
 6. Double-click `index.html` to start the game.
 
