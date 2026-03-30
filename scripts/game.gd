@@ -91,6 +91,7 @@ var sparks := []
 var pickups := []
 var particles := []
 var floaters := []
+var enemy_residue := []
 
 var background_paths := []
 var background_pools := {"random": [], "aww": [], "funny": [], "pinup": []}
@@ -196,6 +197,7 @@ func _process(delta: float) -> void:
 			if state_name == "playing":
 				_update_pickups(delta)
 			_update_particles(delta)
+			_update_enemy_residue(delta)
 			_update_floaters(delta)
 			var blend_speed := 8.0 if danger > danger_level else 4.0
 			danger_level = lerpf(danger_level, danger, min(1.0, delta * blend_speed))
@@ -288,6 +290,7 @@ func _start_level_data(level_number: int) -> void:
 	pickups.clear()
 	particles.clear()
 	floaters.clear()
+	enemy_residue.clear()
 	capture_percent = _compute_capture_percent()
 	danger_level = 0.0
 
@@ -297,6 +300,7 @@ func _respawn_after_death() -> void:
 	_spawn_enemies()
 	_spawn_sparks()
 	pickups.clear()
+	enemy_residue.clear()
 	state_name = "playing"
 	state_timer = 0.0
 	status_message = "Back in."
@@ -367,7 +371,8 @@ func _spawn_enemies() -> void:
 				"arm_a": rng.randf_range(26.0, 52.0),
 				"arm_b": rng.randf_range(18.0, 46.0),
 				"hue": rng.randf(),
-				"history": []
+				"history": [],
+				"residue_clock": 0.0
 			}
 		)
 
@@ -613,6 +618,7 @@ func _update_enemies(delta: float) -> float:
 		var next_y: float = float(enemy["y"]) + float(enemy["vy"]) * speed_mult * delta
 		enemy["angle"] += enemy["spin"] * delta
 		enemy["hue"] = fmod(enemy["hue"] + delta * 0.1, 1.0)
+		enemy["residue_clock"] += delta
 
 		if _position_hits_barrier(Vector2(next_x, enemy["y"])):
 			enemy["vx"] *= -1.0
@@ -624,8 +630,11 @@ func _update_enemies(delta: float) -> float:
 		enemy["x"] = next_x
 		enemy["y"] = next_y
 		enemy["history"].push_front({"x": next_x, "y": next_y, "angle": enemy["angle"]})
-		while enemy["history"].size() > 20:
+		while enemy["history"].size() > 30:
 			enemy["history"].pop_back()
+		while enemy["residue_clock"] >= 0.05:
+			enemy["residue_clock"] -= 0.05
+			_drop_enemy_residue(enemy)
 
 		if player["drawing"] and _enemy_hits_trail(enemy):
 			_lose_life("A QiX tore through your cut.")
@@ -1012,6 +1021,39 @@ func _update_floaters(delta: float) -> void:
 	floaters = survivors
 
 
+func _drop_enemy_residue(enemy: Dictionary) -> void:
+	var points := [Vector2(enemy["x"], enemy["y"])]
+	var segments := _qix_segments(enemy)
+	for segment in segments:
+		points.append(segment["a"])
+		points.append(segment["b"])
+	for point in points:
+		var col: int = clamp(int((point.x - BOARD_RECT.position.x) / CELL), 1, COLS - 2)
+		var row: int = clamp(int((point.y - BOARD_RECT.position.y) / CELL), 1, ROWS - 2)
+		if grid[row][col] != TILE_EMPTY:
+			continue
+		enemy_residue.append(
+			{
+				"pos": _cell_center(col, row),
+				"hue": enemy["hue"],
+				"life": 1.1,
+				"max_life": 1.1
+			}
+		)
+	while enemy_residue.size() > 180:
+		enemy_residue.pop_front()
+
+
+func _update_enemy_residue(delta: float) -> void:
+	var survivors := []
+	for residue in enemy_residue:
+		residue["life"] -= delta
+		if residue["life"] <= 0.0:
+			continue
+		survivors.append(residue)
+	enemy_residue = survivors
+
+
 func _compute_capture_percent() -> float:
 	var total := float(COLS * ROWS)
 	var claimed := 0.0
@@ -1120,10 +1162,10 @@ func _pick_background_texture() -> Texture2D:
 	if pool.is_empty():
 		return null
 	var path: String = pool[rng.randi_range(0, pool.size() - 1)]
-	var image := Image.new()
-	if image.load(ProjectSettings.globalize_path(path)) != OK:
-		return null
-	return ImageTexture.create_from_image(image)
+	var texture := load(path)
+	if texture is Texture2D:
+		return texture
+	return null
 
 
 func _assign_background_texture(texture: Texture2D) -> void:
@@ -1476,6 +1518,8 @@ func _on_exit_button_pressed() -> void:
 func _draw() -> void:
 	_draw_backdrop()
 	_draw_board()
+	if state_name != "level_clear":
+		_draw_enemy_residue()
 	_draw_particles()
 	if state_name != "level_clear":
 		_draw_enemies()
@@ -1554,14 +1598,14 @@ func _draw_board() -> void:
 	if reveal_complete:
 		if current_background != null:
 			draw_texture_rect(current_background, board_rect, false, Color(1, 1, 1, 1.0))
-		draw_rect(board_rect, Color(1, 1, 1, 0.05), true)
+		draw_rect(board_rect, Color(1, 1, 1, 0.035), true)
 	else:
 		if current_background_gray != null:
-			var gray_alpha := 0.46 if state_name == "title" else 0.92
+			var gray_alpha := 0.46 if state_name == "title" else 0.98
 			draw_texture_rect(current_background_gray, board_rect, false, Color(1, 1, 1, gray_alpha))
 		if grain_texture != null:
-			draw_texture_rect(grain_texture, board_rect, true, Color(1, 1, 1, 0.18 if state_name == "title" else 0.26))
-		draw_rect(board_rect, Color(0.02, 0.03, 0.05, 0.24 if state_name == "title" else 0.18), true)
+			draw_texture_rect(grain_texture, board_rect, true, Color(1, 1, 1, 0.22 if state_name == "title" else 0.3))
+		draw_rect(board_rect, Color(0.02, 0.03, 0.05, 0.28 if state_name == "title" else 0.16), true)
 
 	for scan in range(18):
 		var scan_y := board.position.y + 12.0 + scan * ((board.size.y - 24.0) / 17.0)
@@ -1574,24 +1618,24 @@ func _draw_board() -> void:
 				match grid[row][col]:
 					TILE_EMPTY:
 						var empty_color := Color("070b12")
-						empty_color.a = 0.78
+						empty_color.a = 0.94
 						draw_rect(rect, empty_color, true)
 						if (col + row) % 2 == 0:
-							draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.018), true)
+							draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.014), true)
 					TILE_SAFE:
 						var claim_color := _theme_color("claim_fill")
-						claim_color.a = 0.12
+						claim_color.a = 0.03
 						draw_rect(rect, claim_color, true)
-						draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.24), false, 1.0)
-						draw_rect(Rect2(rect.position + Vector2(2.0, 2.0), Vector2(rect.size.x - 4.0, 3.0)), _with_alpha(Color.WHITE, 0.05), true)
+						draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.16), false, 1.0)
+						draw_rect(Rect2(rect.position + Vector2(2.0, 2.0), Vector2(rect.size.x - 4.0, 2.0)), _with_alpha(Color.WHITE, 0.04), true)
 					TILE_TRAIL:
 						var pulse := _trail_color()
 						pulse.a = 0.94
 						draw_rect(rect.grow(-2.0), pulse, true)
 						draw_rect(rect.grow(-0.75), Color.WHITE, false, 1.0)
 	else:
-		draw_rect(_shift_rect(board, camera_offset * 0.18), _with_alpha(Color.WHITE, 0.08), true)
-		draw_rect(_shift_rect(board.grow(-10.0), camera_offset * 0.08), _with_alpha(Color.BLACK, 0.04), false, 2.0)
+		draw_rect(_shift_rect(board, camera_offset * 0.18), _with_alpha(Color.WHITE, 0.02), true)
+		draw_rect(_shift_rect(board.grow(-10.0), camera_offset * 0.08), _with_alpha(Color.BLACK, 0.03), false, 2.0)
 
 	draw_rect(_shift_rect(board, camera_offset * 0.18), _with_alpha(_theme_color("rail"), 0.54), false, 3.0)
 	draw_rect(_shift_rect(board.grow(-12.0), camera_offset * 0.08), _with_alpha(_theme_color("trail_a"), 0.08), false, 2.0)
@@ -1618,30 +1662,34 @@ func _draw_player() -> void:
 	if _effect_active("hex"):
 		shell = Color("ff6185")
 	var history: Array = player.get("history", [])
-	for index in range(history.size() - 1, -1, -1):
-		var ghost = history[index]
-		var alpha := float(index + 1) / float(history.size() + 1)
-		var ghost_pos: Vector2 = ghost["pos"] + camera_offset * 0.72
-		draw_circle(ghost_pos, 14.0 + alpha * 6.0, _with_alpha(shell, alpha * 0.1))
-		draw_circle(ghost_pos - dir * (6.0 + alpha * 6.0), 8.0 + alpha * 3.0, _with_alpha(shell.lerp(Color.WHITE, 0.2), alpha * 0.08))
+	for index in range(history.size() - 1):
+		var current: Vector2 = history[index]["pos"] + camera_offset * 0.68
+		var next: Vector2 = history[index + 1]["pos"] + camera_offset * 0.68
+		var tail_alpha := 1.0 - float(index) / float(max(1, history.size() - 1))
+		var tail_width := 11.0 * tail_alpha + 1.6
+		draw_line(current, next, _with_alpha(shell.lerp(Color("ffd8f3"), 0.3), tail_alpha * 0.34), tail_width)
+		draw_line(current, next, _with_alpha(Color.WHITE, tail_alpha * 0.12), max(1.0, tail_width * 0.25))
 	var tail_color := shell.lerp(Color("ff8ad0"), 0.35)
-	draw_circle(pos, 24.0, _with_alpha(shell, 0.15))
-	draw_circle(pos - dir * 10.0, 18.0, _with_alpha(tail_color, 0.08))
 	var nose := pos + dir * 16.0
-	var left := pos + perp * 9.2 - dir * 1.0
-	var right := pos - perp * 9.2 - dir * 1.0
-	var tail := pos - dir * 15.0
+	var left := pos + perp * 8.4 - dir * 1.8
+	var right := pos - perp * 8.4 - dir * 1.8
+	var tail := pos - dir * 14.0
 	var body := PackedVector2Array([nose, left, tail, right])
+	var fin := PackedVector2Array([
+		tail - dir * 12.0,
+		pos - perp * 4.4 - dir * 8.5,
+		pos + perp * 4.4 - dir * 8.5
+	])
+	draw_colored_polygon(fin, _with_alpha(tail_color, 0.86))
 	draw_colored_polygon(body, shell)
-	draw_colored_polygon(PackedVector2Array([pos + dir * 7.0, pos + perp * 4.2, pos - dir * 9.5, pos - perp * 4.2]), tail_color)
-	draw_colored_polygon(PackedVector2Array([tail - dir * 8.0, pos - perp * 3.4 - dir * 8.0, pos + perp * 3.4 - dir * 8.0]), _with_alpha(tail_color, 0.9))
-	draw_colored_polygon(PackedVector2Array([nose - dir * 3.0 + perp * 3.2, nose - dir * 6.6, nose - dir * 3.0 - perp * 3.2]), core)
-	draw_line(pos - perp * 5.0 - dir * 1.5, pos + perp * 5.0 - dir * 1.5, _with_alpha(Color.WHITE, 0.34), 1.6)
-	draw_circle(pos - dir * 1.0, 2.7, Color("1c1329"))
-	draw_circle(pos + dir * 2.8 + perp * 1.2, 1.8, _with_alpha(Color.WHITE, 0.42))
+	draw_colored_polygon(PackedVector2Array([pos + dir * 6.0, pos + perp * 3.6, pos - dir * 8.8, pos - perp * 3.6]), tail_color)
+	draw_colored_polygon(PackedVector2Array([nose - dir * 3.4 + perp * 3.0, nose - dir * 7.0, nose - dir * 3.4 - perp * 3.0]), core)
+	draw_line(pos - perp * 4.6 - dir * 2.1, pos + perp * 4.6 - dir * 2.1, _with_alpha(Color.WHITE, 0.38), 1.5)
+	draw_circle(pos - dir * 0.8, 2.2, Color("1c1329"))
+	draw_circle(pos + dir * 4.6, 1.8, _with_alpha(Color.WHITE, 0.56))
 	if _effect_active("shield"):
-		var shield := _with_alpha(Color("85f6ff"), 0.3 + sin(title_phase * 9.0) * 0.08)
-		draw_arc(pos, 19.0, 0.0, TAU, 40, shield, 2.5, true)
+		var shield := _with_alpha(Color("85f6ff"), 0.32 + sin(title_phase * 9.0) * 0.08)
+		draw_arc(pos, 18.0, 0.0, TAU, 40, shield, 2.5, true)
 
 
 func _draw_enemies() -> void:
@@ -1651,45 +1699,42 @@ func _draw_enemies() -> void:
 			history = [{"x": enemy["x"], "y": enemy["y"], "angle": enemy["angle"]}]
 		var comet_points := PackedVector2Array()
 		for ghost in history:
-			comet_points.append(Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.58)
+			comet_points.append(Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.6)
+		var trail_a := Color.from_hsv(enemy["hue"], 0.74, 1.0, 1.0)
+		var trail_b := Color.from_hsv(fmod(enemy["hue"] + 0.16, 1.0), 0.58, 1.0, 1.0)
 		for index in range(comet_points.size() - 1):
 			var alpha_tail := 1.0 - float(index) / float(max(1, comet_points.size() - 1))
-			var tail_color := Color.from_hsv(fmod(enemy["hue"] + 0.12, 1.0), 0.68, 1.0, alpha_tail * 0.22)
-			draw_line(comet_points[index], comet_points[index + 1], tail_color, 15.0 * alpha_tail + 2.4)
-			draw_line(comet_points[index], comet_points[index + 1], _with_alpha(Color.WHITE, alpha_tail * 0.06), 5.0 * alpha_tail + 1.0)
+			var tail_color := trail_a.lerp(trail_b, float(index % 5) / 4.0)
+			draw_line(comet_points[index], comet_points[index + 1], _with_alpha(tail_color, alpha_tail * 0.42), 14.0 * alpha_tail + 1.8)
+			draw_line(comet_points[index], comet_points[index + 1], _with_alpha(Color.WHITE, alpha_tail * 0.12), 3.6 * alpha_tail + 0.8)
 		for index in range(history.size() - 1, -1, -1):
 			var ghost = history[index]
 			var alpha: float = float(index + 1) / float(history.size() + 1)
-			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.18)
-			var glow_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, alpha * 0.15)
+			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.1)
+			var glow_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, alpha * 0.08)
 			var a_dir := Vector2(cos(ghost["angle"]), sin(ghost["angle"]))
 			var b_dir := Vector2(cos(ghost["angle"] + PI * 0.5), sin(ghost["angle"] + PI * 0.5))
 			var center := Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.7
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(glow, glow.a * 0.72), 7.0)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(glow_b, glow_b.a * 0.68), 5.6)
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 3.2)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow_b, 2.6)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(glow, glow.a * 0.85), 5.6)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(glow_b, glow_b.a * 0.82), 4.4)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 2.4)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow_b, 2.0)
 
 		var center_now := Vector2(enemy["x"], enemy["y"]) + camera_offset
-		var bloom := Color.from_hsv(enemy["hue"], 0.75, 1.0, 0.16 + danger_level * 0.1)
-		draw_circle(center_now, 34.0, _with_alpha(bloom, bloom.a * 0.42))
-		draw_circle(center_now, 24.0, _with_alpha(bloom, 0.18))
 		var segments := _qix_segments(enemy)
 		var line_a := Color.from_hsv(enemy["hue"], 0.58, 1.0, 0.95)
 		var line_b := Color.from_hsv(fmod(enemy["hue"] + 0.18, 1.0), 0.55, 1.0, 0.9)
-		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, _with_alpha(line_a, 0.28), 8.6)
-		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, _with_alpha(line_b, 0.24), 7.0)
-		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, line_a, 3.8)
-		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, line_b, 3.0)
-		var ring_radius: float = 12.0 + sin(title_phase * 4.2 + enemy["hue"] * TAU) * 1.8
-		draw_arc(center_now, ring_radius, 0.0, TAU, 40, _with_alpha(line_a, 0.38), 1.6, true)
+		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, _with_alpha(line_a, 0.26), 7.8)
+		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, _with_alpha(line_b, 0.22), 6.2)
+		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, line_a, 3.6)
+		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, line_b, 2.8)
 		for ray in range(4):
 			var ray_angle: float = enemy["angle"] + ray * PI * 0.5 + sin(title_phase * 2.4 + ray) * 0.08
 			var ray_dir := Vector2(cos(ray_angle), sin(ray_angle))
-			draw_line(center_now + ray_dir * 3.0, center_now + ray_dir * 12.0, _with_alpha(line_b, 0.42), 1.7)
-		draw_circle(center_now, 9.0, _theme_color("enemy_core"))
-		draw_circle(center_now, 3.1, Color("120816"))
-		draw_circle(center_now, 1.2, Color.WHITE)
+			draw_line(center_now + ray_dir * 3.0, center_now + ray_dir * 12.0, _with_alpha(line_b, 0.34), 1.5)
+		draw_circle(center_now, 7.6, _theme_color("enemy_core"))
+		draw_circle(center_now, 2.8, Color("120816"))
+		draw_circle(center_now, 1.1, Color.WHITE)
 
 
 func _draw_sparks() -> void:
@@ -1760,6 +1805,18 @@ func _draw_pickups() -> void:
 				_draw_cookie_icon(pos, pulse)
 			"hex":
 				_draw_bomb_icon(pos, pulse)
+
+
+func _draw_enemy_residue() -> void:
+	for residue in enemy_residue:
+		var alpha: float = float(residue["life"]) / float(residue["max_life"])
+		var hue: float = residue["hue"]
+		var center: Vector2 = residue["pos"] + camera_offset * 0.36
+		var glow := Color.from_hsv(fmod(hue + 0.08, 1.0), 0.7, 1.0, alpha * 0.2)
+		var cross := Color.from_hsv(fmod(hue + 0.2, 1.0), 0.55, 1.0, alpha * 0.56)
+		draw_circle(center, 8.0 * alpha + 2.0, glow)
+		draw_line(center + Vector2(-3.4, 0.0), center + Vector2(3.4, 0.0), cross, 1.2)
+		draw_line(center + Vector2(0.0, -3.4), center + Vector2(0.0, 3.4), cross, 1.2)
 
 
 func _draw_particles() -> void:
