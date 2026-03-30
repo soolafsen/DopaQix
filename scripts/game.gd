@@ -21,8 +21,8 @@ const ENEMY_SPEED_MIN := 122.0
 const ENEMY_SPEED_MAX := 182.0
 const START_LIVES := 3
 const MAX_LIVES := 5
-const START_GOAL := 62
-const GOAL_STEP := 4
+const START_GOAL := 50
+const GOAL_STEP := 3
 const GOAL_MAX := 80
 const FINAL_LEVEL := 6
 
@@ -209,7 +209,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _toggle_pause() -> void:
 	if state_name == "playing":
 		state_name = "paused"
-		status_message = "Paused"
+		status_message = ""
 		_play_sfx("spark")
 	elif state_name == "paused":
 		state_name = "playing"
@@ -600,7 +600,7 @@ func _update_enemies(delta: float) -> float:
 		enemy["x"] = next_x
 		enemy["y"] = next_y
 		enemy["history"].push_front({"x": next_x, "y": next_y, "angle": enemy["angle"]})
-		while enemy["history"].size() > 6:
+		while enemy["history"].size() > 9:
 			enemy["history"].pop_back()
 
 		if player["drawing"] and _enemy_hits_trail(enemy):
@@ -670,7 +670,7 @@ func _update_sparks(delta: float) -> float:
 			spark["col"] = next["col"]
 			spark["row"] = next["row"]
 			spark["history"].push_front({"col": spark["col"], "row": spark["row"]})
-			while spark["history"].size() > 6:
+			while spark["history"].size() > 8:
 				spark["history"].pop_back()
 
 			if player["drawing"] and grid[spark["row"]][spark["col"]] == TILE_TRAIL:
@@ -989,10 +989,10 @@ func _update_floaters(delta: float) -> void:
 
 
 func _compute_capture_percent() -> float:
-	var total := float((COLS - 2) * (ROWS - 2))
+	var total := float(COLS * ROWS)
 	var claimed := 0.0
-	for row in range(1, ROWS - 1):
-		for col in range(1, COLS - 1):
+	for row in range(ROWS):
+		for col in range(COLS):
 			if grid[row][col] == TILE_SAFE:
 				claimed += 1.0
 	return claimed / max(1.0, total) * 100.0
@@ -1344,7 +1344,7 @@ func _draw_board() -> void:
 	draw_rect(_shift_rect(frame, camera_offset * 0.3), _with_alpha(Color("0e0817"), 0.92), true)
 	draw_rect(_shift_rect(board, camera_offset * 0.2), _with_alpha(Color("02040a"), 0.88), true)
 	if current_background != null:
-		var bg_alpha := 0.62 if state_name == "title" else 0.76
+		var bg_alpha := 0.54 if state_name == "title" else 0.98
 		draw_texture_rect(current_background, _shift_rect(board, camera_offset * 0.12), false, Color(1, 1, 1, bg_alpha))
 
 	for scan in range(18):
@@ -1357,16 +1357,18 @@ func _draw_board() -> void:
 			match grid[row][col]:
 				TILE_EMPTY:
 					var empty_color := Color("060912")
-					empty_color.a = 0.86
+					empty_color.a = 0.96
 					draw_rect(rect, empty_color, true)
 					if (col + row) % 2 == 0:
-						draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.018), true)
+						draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.012), true)
 				TILE_SAFE:
 					var claim_color := _theme_color("claim_fill")
-					claim_color.a = max(claim_color.a, 0.18)
+					claim_color.a = 0.04
 					draw_rect(rect, claim_color, true)
-					draw_rect(rect.grow(-2.0), _with_alpha(_theme_color("rail"), 0.08), true)
-					draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.18), false, 1.0)
+					draw_rect(rect.grow(-1.5), _with_alpha(Color.WHITE, 0.03), true)
+					draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.22), false, 1.0)
+					if (col + row) % 2 == 0:
+						draw_rect(Rect2(rect.position + Vector2(2.0, 2.0), Vector2(rect.size.x - 4.0, 3.0)), _with_alpha(Color.WHITE, 0.05), true)
 				TILE_TRAIL:
 					var pulse := _trail_color()
 					pulse.a = 0.94
@@ -1397,13 +1399,19 @@ func _draw_player() -> void:
 		shell = Color("ffe561")
 	if _effect_active("hex"):
 		shell = Color("ff6185")
-	draw_circle(pos, 17.0, _with_alpha(shell, 0.14))
-	draw_circle(pos, 9.0, core)
-	var nose := pos + dir * 13.0
-	var left := pos - dir * 8.0 + perp * 8.0
-	var right := pos - dir * 8.0 - perp * 8.0
-	draw_colored_polygon(PackedVector2Array([nose, left, right]), shell)
-	draw_circle(pos - dir * 1.8, 2.5, Color("1c1329"))
+	var tail_color := shell.lerp(Color("ff8ad0"), 0.35)
+	draw_circle(pos, 20.0, _with_alpha(shell, 0.15))
+	var nose := pos + dir * 15.0
+	var left := pos + perp * 8.4 - dir * 2.0
+	var right := pos - perp * 8.4 - dir * 2.0
+	var tail := pos - dir * 12.0
+	var body := PackedVector2Array([nose, left, tail, right])
+	draw_colored_polygon(body, shell)
+	draw_colored_polygon(PackedVector2Array([pos + dir * 6.0, pos + perp * 4.0, pos - dir * 6.5, pos - perp * 4.0]), tail_color)
+	draw_colored_polygon(PackedVector2Array([nose - dir * 3.0 + perp * 3.2, nose - dir * 6.6, nose - dir * 3.0 - perp * 3.2]), core)
+	draw_line(pos - perp * 5.0 - dir * 1.5, pos + perp * 5.0 - dir * 1.5, _with_alpha(Color.WHITE, 0.26), 1.4)
+	draw_circle(pos - dir * 1.0, 2.7, Color("1c1329"))
+	draw_circle(pos + dir * 2.8 + perp * 1.2, 1.8, _with_alpha(Color.WHITE, 0.42))
 	if _effect_active("shield"):
 		var shield := _with_alpha(Color("85f6ff"), 0.3 + sin(title_phase * 9.0) * 0.08)
 		draw_arc(pos, 19.0, 0.0, TAU, 40, shield, 2.5, true)
@@ -1417,40 +1425,88 @@ func _draw_enemies() -> void:
 		for index in range(history.size() - 1, -1, -1):
 			var ghost = history[index]
 			var alpha: float = float(index + 1) / float(history.size() + 1)
-			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.28)
+			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.22)
+			var glow_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, alpha * 0.18)
 			var a_dir := Vector2(cos(ghost["angle"]), sin(ghost["angle"]))
 			var b_dir := Vector2(cos(ghost["angle"] + PI * 0.5), sin(ghost["angle"] + PI * 0.5))
 			var center := Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.7
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 3.0)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow, 2.0)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(glow, glow.a * 0.65), 5.4)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(glow_b, glow_b.a * 0.6), 4.4)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 2.8)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow_b, 2.2)
 
 		var center_now := Vector2(enemy["x"], enemy["y"]) + camera_offset
-		var bloom := Color.from_hsv(enemy["hue"], 0.75, 1.0, 0.13 + danger_level * 0.08)
-		draw_circle(center_now, 22.0, bloom)
+		var bloom := Color.from_hsv(enemy["hue"], 0.75, 1.0, 0.16 + danger_level * 0.1)
+		draw_circle(center_now, 28.0, _with_alpha(bloom, bloom.a * 0.45))
+		draw_circle(center_now, 19.0, bloom)
 		var segments := _qix_segments(enemy)
 		var line_a := Color.from_hsv(enemy["hue"], 0.58, 1.0, 0.95)
 		var line_b := Color.from_hsv(fmod(enemy["hue"] + 0.18, 1.0), 0.55, 1.0, 0.9)
-		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, line_a, 3.3)
+		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, _with_alpha(line_a, 0.34), 6.0)
+		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, _with_alpha(line_b, 0.3), 5.0)
+		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, line_a, 3.2)
 		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, line_b, 2.6)
-		draw_circle(center_now, 6.5, _theme_color("enemy_core"))
-		draw_circle(center_now, 2.1, Color.BLACK)
+		var ring_radius: float = 11.0 + sin(title_phase * 4.2 + enemy["hue"] * TAU) * 1.6
+		draw_arc(center_now, ring_radius, 0.0, TAU, 36, _with_alpha(line_a, 0.34), 1.2, true)
+		for ray in range(4):
+			var ray_angle: float = enemy["angle"] + ray * PI * 0.5 + sin(title_phase * 2.4 + ray) * 0.08
+			var ray_dir := Vector2(cos(ray_angle), sin(ray_angle))
+			draw_line(center_now + ray_dir * 3.0, center_now + ray_dir * 10.0, _with_alpha(line_b, 0.42), 1.5)
+		draw_circle(center_now, 7.4, _theme_color("enemy_core"))
+		draw_circle(center_now, 3.1, Color("120816"))
+		draw_circle(center_now, 1.2, Color.WHITE)
 
 
 func _draw_sparks() -> void:
 	for spark in sparks:
+		var menace: float = clamp((18.0 - (abs(int(spark["col"]) - int(player["col"])) + abs(int(spark["row"]) - int(player["row"])))) / 12.0, 0.0, 1.0)
+		var phase: float = title_phase * 14.0 + float(spark["row"]) * 0.4 + float(spark["col"]) * 0.25
+		var body_pos := _cell_center(spark["col"], spark["row"]) + camera_offset + Vector2(0.0, cos(phase * 1.2) * 0.8)
+		var scale: float = 1.45 + menace * 0.22
 		var history: Array = spark["history"]
-		for index in range(history.size() - 1, -1, -1):
-			var ghost = history[index]
-			var alpha: float = float(index + 1) / float(history.size() + 1)
-			var pos := _cell_center(ghost["col"], ghost["row"]) + camera_offset * 0.8
-			var tail := _with_alpha(Color("ff9d75"), alpha * 0.16)
-			draw_circle(pos, 8.0 * alpha, tail)
-		var pos_now := _cell_center(spark["col"], spark["row"]) + camera_offset
-		var body := Color("ffbc6f") if _effect_active("hex") else Color("ffd56d")
-		draw_circle(pos_now, 9.5, _with_alpha(body, 0.16))
-		draw_circle(pos_now, 5.8, body)
-		draw_line(pos_now + Vector2(-5, -3), pos_now + Vector2(5, 3), Color("7e1c18"), 2.0)
-		draw_line(pos_now + Vector2(-5, 3), pos_now + Vector2(5, -3), Color("7e1c18"), 2.0)
+		if history.is_empty():
+			history = [{"col": spark["col"], "row": spark["row"]}]
+		for index in range(0, history.size() - 1):
+			var current = history[index]
+			var next = history[index + 1]
+			var alpha: float = 0.18 + (float(history.size() - index) / float(history.size())) * (0.28 + menace * 0.3)
+			draw_line(
+				_cell_center(current["col"], current["row"]) + camera_offset * 0.82,
+				_cell_center(next["col"], next["row"]) + camera_offset * 0.82,
+				_with_alpha(Color("ffb884"), alpha),
+				1.1 + menace * 0.4
+			)
+		draw_circle(body_pos, 9.0 * scale, _with_alpha(Color("ff7050"), 0.26 + menace * 0.18))
+		var leg_swing: float = sin(phase) * 2.0
+		var body_dark := Color("2b0e0a")
+		var head_color := Color("b31f1f") if not _effect_active("hex") else Color("ff5844")
+		var eye_color := Color("fff3b0")
+		draw_circle(body_pos + Vector2(0.0, 2.1 * scale), 4.6 * scale, body_dark)
+		draw_circle(body_pos + Vector2(0.0, -2.2 * scale), 3.2 * scale, head_color)
+		draw_circle(body_pos + Vector2(-1.2 * scale, -2.5 * scale), 0.95 * scale, eye_color)
+		draw_circle(body_pos + Vector2(1.2 * scale, -2.5 * scale), 0.95 * scale, eye_color)
+		draw_circle(body_pos + Vector2(0.0, -0.2 * scale), 0.9 * scale, Color.WHITE)
+		var leg_color := _with_alpha(Color("ffd9b8"), 0.92)
+		var left_legs := [
+			[Vector2(-2.0, -1.0), Vector2(-6.0, -5.0 - leg_swing)],
+			[Vector2(-2.0, 1.0), Vector2(-7.0, -1.0)],
+			[Vector2(-2.0, 2.5), Vector2(-6.0, 4.0 + leg_swing)],
+			[Vector2(-1.0, 3.5), Vector2(-4.5, 7.0)]
+		]
+		var right_legs := [
+			[Vector2(2.0, -1.0), Vector2(6.0, -5.0 + leg_swing)],
+			[Vector2(2.0, 1.0), Vector2(7.0, -1.0)],
+			[Vector2(2.0, 2.5), Vector2(6.0, 4.0 - leg_swing)],
+			[Vector2(1.0, 3.5), Vector2(4.5, 7.0)]
+		]
+		for leg in left_legs:
+			draw_line(body_pos + leg[0] * scale, body_pos + leg[1] * scale, leg_color, 1.4)
+		for leg in right_legs:
+			draw_line(body_pos + leg[0] * scale, body_pos + leg[1] * scale, leg_color, 1.4)
+		for ray in range(3):
+			var ray_angle: float = phase + ray * TAU / 3.0
+			var ray_dir := Vector2(cos(ray_angle), sin(ray_angle))
+			draw_line(body_pos, body_pos + ray_dir * (4.5 + menace * 2.5) * scale, _with_alpha(Color("ffe8b4"), 0.55 + menace * 0.35), 1.0)
 
 
 func _draw_pickups() -> void:
@@ -1459,17 +1515,16 @@ func _draw_pickups() -> void:
 		var pos := _cell_center(pickup["col"], pickup["row"]) + camera_offset * 0.6
 		var pulse := 0.84 + sin(title_phase * 7.0 + pickup["wobble"] * 3.0) * 0.18
 		var color := Color(meta["color"])
-		draw_circle(pos, 16.0 * pulse, _with_alpha(color, 0.12))
-		draw_circle(pos, 10.0 * pulse, color)
-		draw_circle(pos + Vector2(-2.0, -2.0), 3.0, Color.WHITE)
-		var label := "!"
-		if pickup["kind"] == "heart":
-			label = "+"
-		elif pickup["kind"] == "shield":
-			label = "S"
-		elif pickup["kind"] == "rush":
-			label = "R"
-		draw_string(ThemeDB.fallback_font, pos + Vector2(-5.0, 6.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 18, Color("1a1026"))
+		draw_circle(pos, 18.0 * pulse, _with_alpha(color, 0.12))
+		match pickup["kind"]:
+			"heart":
+				_draw_heart_icon(pos, pulse)
+			"shield":
+				_draw_shield_icon(pos, pulse)
+			"rush":
+				_draw_cookie_icon(pos, pulse)
+			"hex":
+				_draw_bomb_icon(pos, pulse)
 
 
 func _draw_particles() -> void:
@@ -1489,47 +1544,48 @@ func _draw_floaters() -> void:
 
 
 func _draw_hud() -> void:
-	var stat_panel := Rect2(Vector2(34.0, 30.0), Vector2(214.0, 150.0))
-	_draw_panel(stat_panel, Color("0b1321", 0.74), _with_alpha(_theme_color("rail"), 0.24))
-	_draw_label(stat_panel.position + Vector2(18.0, 30.0), current_theme.get("name", "Arcade"), 17, Color("aaf8ff"))
-	_draw_label(stat_panel.position + Vector2(18.0, 60.0), "Score", 15, Color("ffdba1"))
-	_draw_label(stat_panel.position + Vector2(18.0, 104.0), "%08d" % score, 31, Color("fff4d2"))
-	_draw_label(stat_panel.position + Vector2(18.0, 132.0), "HI %08d" % high_score, 15, Color("dceaff"))
+	var header_x := 34.0
+	var card_y := 32.0
+	var card_height := 70.0
+	var gap := 10.0
+	var card_width := 176.0
+	var cards := [
+		{"label": "Score", "value": "%08d" % score, "accent": Color("ffd86a"), "size": 27},
+		{"label": "High", "value": "%08d" % high_score, "accent": Color("f5fbff"), "size": 24},
+		{"label": "Level", "value": "%02d / %d" % [level, FINAL_LEVEL], "accent": _theme_color("rail"), "size": 24},
+		{"label": "Lives", "value": str(lives), "accent": Color("fff0d1"), "size": 26},
+		{"label": "Claimed", "value": "%d%%" % int(capture_percent), "accent": Color("fff4db"), "size": 25},
+		{"label": "Goal", "value": "%d%%" % capture_goal, "accent": Color("c8fff6"), "size": 25},
+		{"label": "Theme", "value": current_theme.get("name", "Arcade"), "accent": Color("d7f8ff"), "size": 17}
+	]
+	for index in range(cards.size()):
+		var card = cards[index]
+		var rect := Rect2(Vector2(header_x + index * (card_width + gap), card_y), Vector2(card_width, card_height))
+		_draw_metric_card(rect, card["label"], card["value"], card["accent"], card["size"])
 
-	var life_panel := Rect2(Vector2(34.0, 194.0), Vector2(214.0, 94.0))
-	_draw_panel(life_panel, Color("111527", 0.62), _with_alpha(_theme_color("trail_b"), 0.18))
-	_draw_label(life_panel.position + Vector2(18.0, 32.0), "LIVES  %d" % lives, 18, Color("fff0d1"))
-	_draw_label(life_panel.position + Vector2(18.0, 60.0), "LEVEL  %d / %d" % [level, FINAL_LEVEL], 18, Color("d7f8ff"))
-	_draw_label(life_panel.position + Vector2(18.0, 84.0), "RIDE THE RAIL, CUT THE VOID", 14, Color("ffdf88"))
-
-	var progress_panel := Rect2(Vector2(BOARD_RECT.position.x + 96.0, 28.0), Vector2(BOARD_RECT.size.x - 192.0, 86.0))
-	_draw_panel(progress_panel, Color("09111f", 0.6), _with_alpha(_theme_color("trail_a"), 0.18))
-	_draw_label(progress_panel.position + Vector2(22.0, 30.0), "Board Claim", 15, Color("ffe9a8"))
-	_draw_label(progress_panel.position + Vector2(22.0, 58.0), "%d%% CLEARED" % int(capture_percent), 24, Color("fff8e0"))
-	_draw_label(progress_panel.position + Vector2(progress_panel.size.x - 172.0, 58.0), "GOAL %d%%" % capture_goal, 20, Color("c8fff6"))
-	var meter_rect := Rect2(progress_panel.position + Vector2(22.0, 64.0), Vector2(progress_panel.size.x - 44.0, 12.0))
-	_draw_progress_bar(meter_rect, capture_percent / max(1.0, float(capture_goal)), _theme_color("trail_a"), _theme_color("trail_b"))
-
-	var utility_panel := Rect2(Vector2(size.x - 394.0, 34.0), Vector2(178.0, 54.0))
-	_draw_panel(utility_panel, Color("0c1321", 0.56), _with_alpha(_theme_color("rail"), 0.18))
-	_draw_label(utility_panel.position + Vector2(18.0, 35.0), "ESC pause   M music", 15, Color("def8ff"))
+	var progress_rect := Rect2(Vector2(header_x, 114.0), Vector2(BOARD_RECT.end.x - header_x, 20.0))
+	_draw_progress_bar(progress_rect, capture_percent / max(1.0, float(capture_goal)), _theme_color("trail_a"), _theme_color("trail_b"))
+	_draw_label(progress_rect.position + Vector2(10.0, -6.0), "BOARD CLAIM", 14, Color("ffe8b3"))
+	_draw_label(progress_rect.position + Vector2(progress_rect.size.x - 122.0, -6.0), "%d%% / %d%%" % [int(capture_percent), capture_goal], 14, Color("def8ff"))
 
 	var effects := []
 	for key in ["rush", "shield", "hex"]:
 		if _effect_active(key):
 			effects.append("%s %.0fs" % [PICKUP_META[key]["title"], ceil(active_effects[key])])
-	var effect_panel := Rect2(Vector2(34.0, size.y - 92.0), Vector2(360.0, 58.0))
-	_draw_panel(effect_panel, Color("0c1321", 0.58), _with_alpha(_theme_color("trail_b"), 0.18))
-	_draw_label(effect_panel.position + Vector2(18.0, 37.0), "CANDY BANK  " + ("EMPTY" if effects.is_empty() else " | ".join(effects)), 15, Color("d7fbff"))
+	if not effects.is_empty():
+		var effect_panel := Rect2(Vector2(BOARD_RECT.position.x + 150.0, BOARD_RECT.end.y + 18.0), Vector2(BOARD_RECT.size.x - 300.0, 44.0))
+		_draw_panel(effect_panel, Color("0c1321", 0.6), _with_alpha(_theme_color("trail_b"), 0.18))
+		_draw_centered_label(Vector2(effect_panel.get_center().x, effect_panel.position.y + 29.0), "ACTIVE  " + " | ".join(effects), 17, Color("d7fbff"))
 
-	if status_message != "":
-		var status_panel := Rect2(Vector2(size.x - 334.0, 106.0), Vector2(300.0, 52.0))
+	if status_message != "" and state_name not in ["paused", "death", "game_over"]:
+		var status_panel := Rect2(Vector2(BOARD_RECT.end.x - 250.0, 146.0), Vector2(250.0, 42.0))
 		_draw_panel(status_panel, Color("220d13", 0.56), _with_alpha(Color("ff9d7a"), 0.2))
-		_draw_label(status_panel.position + Vector2(18.0, 34.0), status_message, 16, Color("ffd3b8"))
+		_draw_centered_label(Vector2(status_panel.get_center().x, status_panel.position.y + 28.0), status_message, 15, Color("ffd3b8"))
 	if banner_timer > 0.0:
-		var banner_rect := Rect2(Vector2(BOARD_RECT.position.x + 148.0, BOARD_RECT.end.y + 18.0), Vector2(BOARD_RECT.size.x - 296.0, 52.0))
+		var banner_y := BOARD_RECT.end.y + 18.0 if effects.is_empty() else BOARD_RECT.end.y + 68.0
+		var banner_rect := Rect2(Vector2(BOARD_RECT.position.x + 148.0, banner_y), Vector2(BOARD_RECT.size.x - 296.0, 46.0))
 		_draw_panel(banner_rect, Color("0c1220", 0.56), _with_alpha(_theme_color("trail_a"), 0.2))
-		_draw_centered_label(Vector2(banner_rect.get_center().x, banner_rect.position.y + 34.0), banner_text, 22, Color("fff6bf"))
+		_draw_centered_label(Vector2(banner_rect.get_center().x, banner_rect.position.y + 30.0), banner_text, 20, Color("fff6bf"))
 
 
 func _draw_overlay() -> void:
@@ -1593,6 +1649,78 @@ func _draw_centered_label(position: Vector2, text: String, font_size: int, color
 func _draw_shadowed_label(position: Vector2, text: String, font_size: int, shadow: Color, fill: Color) -> void:
 	_draw_label(position + Vector2(5.0, 5.0), text, font_size, shadow)
 	_draw_label(position, text, font_size, fill)
+
+
+func _draw_metric_card(rect: Rect2, label: String, value: String, accent: Color, value_size: int) -> void:
+	_draw_panel(rect, Color("0c1321", 0.64), _with_alpha(_theme_color("rail"), 0.16))
+	_draw_label(rect.position + Vector2(16.0, 22.0), label.to_upper(), 13, Color("a8bac7"))
+	_draw_label(rect.position + Vector2(16.0, 54.0), value, value_size, accent)
+
+
+func _draw_heart_icon(pos: Vector2, pulse: float) -> void:
+	var scale := 0.95 + pulse * 0.18
+	var red := Color("ff6f97")
+	draw_circle(pos + Vector2(-4.0, -3.0) * scale, 5.8 * scale, red)
+	draw_circle(pos + Vector2(4.0, -3.0) * scale, 5.8 * scale, red)
+	draw_colored_polygon(
+		PackedVector2Array([
+			pos + Vector2(-9.0, -0.5) * scale,
+			pos + Vector2(0.0, 10.5) * scale,
+			pos + Vector2(9.0, -0.5) * scale
+		]),
+		red
+	)
+	draw_circle(pos + Vector2(-2.0, -5.0) * scale, 1.8 * scale, _with_alpha(Color.WHITE, 0.46))
+
+
+func _draw_shield_icon(pos: Vector2, pulse: float) -> void:
+	var scale := 0.92 + pulse * 0.16
+	var outer := PackedVector2Array([
+		pos + Vector2(0.0, -10.0) * scale,
+		pos + Vector2(8.0, -6.0) * scale,
+		pos + Vector2(7.0, 4.0) * scale,
+		pos + Vector2(0.0, 11.0) * scale,
+		pos + Vector2(-7.0, 4.0) * scale,
+		pos + Vector2(-8.0, -6.0) * scale
+	])
+	draw_colored_polygon(outer, Color("78ecff"))
+	draw_colored_polygon(outer, _with_alpha(Color("142d58"), 0.18))
+	var inner := PackedVector2Array([
+		pos + Vector2(0.0, -6.0) * scale,
+		pos + Vector2(4.8, -3.0) * scale,
+		pos + Vector2(4.2, 2.5) * scale,
+		pos + Vector2(0.0, 7.0) * scale,
+		pos + Vector2(-4.2, 2.5) * scale,
+		pos + Vector2(-4.8, -3.0) * scale
+	])
+	draw_colored_polygon(inner, Color("dfffff"))
+	draw_line(pos + Vector2(0.0, -4.5) * scale, pos + Vector2(0.0, 5.5) * scale, _with_alpha(Color("1d567b"), 0.55), 1.4)
+
+
+func _draw_bomb_icon(pos: Vector2, pulse: float) -> void:
+	var scale := 0.94 + pulse * 0.18
+	var body := Color("2b2231")
+	var rim := Color("ffb060")
+	draw_circle(pos + Vector2(0.0, 1.0) * scale, 8.2 * scale, body)
+	draw_circle(pos + Vector2(0.0, 1.0) * scale, 8.2 * scale, _with_alpha(rim, 0.18))
+	draw_circle(pos + Vector2(-2.6, -2.4) * scale, 2.0 * scale, _with_alpha(Color.WHITE, 0.25))
+	draw_line(pos + Vector2(2.0, -5.0) * scale, pos + Vector2(6.5, -10.0) * scale, Color("ffd27a"), 1.8)
+	draw_line(pos + Vector2(6.5, -10.0) * scale, pos + Vector2(9.0, -8.6) * scale, Color("ff8f54"), 1.6)
+	for ray in range(4):
+		var angle := title_phase * 5.0 + ray * PI * 0.5
+		var ray_dir := Vector2(cos(angle), sin(angle))
+		draw_line(pos + Vector2(9.0, -8.6) * scale, pos + Vector2(9.0, -8.6) * scale + ray_dir * 3.0 * scale, _with_alpha(Color("ffe68c"), 0.8), 1.0)
+
+
+func _draw_cookie_icon(pos: Vector2, pulse: float) -> void:
+	var scale := 0.94 + pulse * 0.18
+	var dough := Color("d99146")
+	draw_circle(pos, 8.2 * scale, dough)
+	draw_circle(pos + Vector2(-2.5, -2.0) * scale, 2.1 * scale, Color("7d4722"))
+	draw_circle(pos + Vector2(3.2, -1.0) * scale, 1.8 * scale, Color("8a4e27"))
+	draw_circle(pos + Vector2(1.6, 3.3) * scale, 2.0 * scale, Color("6f3d1a"))
+	draw_circle(pos + Vector2(-4.0, 2.6) * scale, 1.5 * scale, Color("7a4520"))
+	draw_circle(pos + Vector2(-1.2, -3.2) * scale, 1.6 * scale, _with_alpha(Color.WHITE, 0.18))
 
 
 func _draw_panel(rect: Rect2, fill: Color, stroke: Color) -> void:
