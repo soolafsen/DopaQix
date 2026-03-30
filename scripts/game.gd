@@ -25,6 +25,8 @@ const START_GOAL := 50
 const GOAL_STEP := 3
 const GOAL_MAX := 80
 const FINAL_LEVEL := 6
+const SETTING_POOLS := ["random", "aww", "funny", "pinup"]
+const DEFAULT_REVEAL_POOL := "aww"
 
 const PICKUP_META := {
 	"rush": {"title": "RUSH DRIVE", "color": "ffd75e", "zone": "field", "duration": 8.0, "good": true},
@@ -91,8 +93,11 @@ var particles := []
 var floaters := []
 
 var background_paths := []
+var background_pools := {"random": [], "aww": [], "funny": [], "pinup": []}
 var current_background: Texture2D
+var current_background_gray: Texture2D
 var current_theme := {}
+var grain_texture: Texture2D
 
 var active_effects := {"rush": 0.0, "shield": 0.0, "hex": 0.0}
 var score := 0
@@ -119,6 +124,11 @@ var field_pickup_timer := 6.0
 var slice_sound_cooldown := 0.0
 
 var music_enabled := true
+var music_volume := 0.7
+var speed_setting := 2
+var magic_mode := "more"
+var reveal_pool := DEFAULT_REVEAL_POOL
+var cheat_enabled := false
 var music_player: AudioStreamPlayer
 var danger_player: AudioStreamPlayer
 var sfx_players := []
@@ -134,6 +144,7 @@ func _ready() -> void:
 	DisplayServer.window_set_title(PROJECT_TITLE)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_load_backgrounds()
+	_build_grain_texture()
 	_ensure_input_actions()
 	_build_audio()
 	_build_ui()
@@ -171,11 +182,7 @@ func _process(delta: float) -> void:
 				else:
 					_enter_game_over(false)
 		"level_clear":
-			if state_timer >= 2.3 or Input.is_action_just_pressed("accept"):
-				if level >= FINAL_LEVEL:
-					_enter_game_over(true)
-				else:
-					_start_level(level + 1)
+			pass
 		"game_over":
 			if Input.is_action_just_pressed("accept"):
 				_start_game()
@@ -197,6 +204,16 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if _options_visible() and _handle_option_click(event.position):
+			return
+		if state_name == "level_clear":
+			_advance_after_level_clear()
+			return
+	if event.is_action_pressed("accept"):
+		if state_name == "level_clear":
+			_advance_after_level_clear()
+			return
 	if event.is_action_pressed("pause"):
 		if state_name in ["playing", "paused"]:
 			_toggle_pause()
@@ -260,10 +277,10 @@ func _start_level(level_number: int) -> void:
 func _start_level_data(level_number: int) -> void:
 	capture_goal = min(START_GOAL + (level_number - 1) * GOAL_STEP, GOAL_MAX)
 	current_theme = _theme_for_level(level_number)
-	current_background = _pick_background_texture()
+	_assign_background_texture(_pick_background_texture())
 	active_effects = {"rush": 0.0, "shield": 0.0, "hex": 0.0}
-	rail_pickup_timer = rng.randf_range(4.2, 6.4)
-	field_pickup_timer = rng.randf_range(5.2, 7.6)
+	rail_pickup_timer = _roll_pickup_timer(4.2, 6.4)
+	field_pickup_timer = _roll_pickup_timer(5.2, 7.6)
 	_init_grid()
 	_spawn_player()
 	_spawn_enemies()
@@ -325,8 +342,10 @@ func _spawn_player() -> void:
 		"drawing": false,
 		"trail": [],
 		"trail_keys": {},
-		"move_clock": 0.0
+		"move_clock": 0.0,
+		"history": []
 	}
+	_record_player_history()
 
 
 func _spawn_enemies() -> void:
@@ -391,7 +410,7 @@ func _update_player(delta: float) -> void:
 
 	player["desired_dir"] = _read_input_direction(player["desired_dir"])
 	player["move_clock"] += delta
-	var interval := MOVE_INTERVAL
+	var interval := MOVE_INTERVAL / _player_speed_scale()
 	if _effect_active("rush"):
 		interval *= 0.62
 	if _effect_active("hex"):
@@ -436,6 +455,7 @@ func _step_player() -> bool:
 		if next_tile == TILE_SAFE:
 			player["col"] = next_col
 			player["row"] = next_row
+			_record_player_history()
 			_finish_trail()
 			return true
 		if next_tile == TILE_EMPTY:
@@ -444,6 +464,7 @@ func _step_player() -> bool:
 			grid[next_row][next_col] = TILE_TRAIL
 			player["trail"].append({"col": next_col, "row": next_row})
 			player["trail_keys"][next_key] = true
+			_record_player_history()
 			_on_player_slice()
 			return true
 		return false
@@ -451,6 +472,7 @@ func _step_player() -> bool:
 	if next_tile == TILE_SAFE:
 		player["col"] = next_col
 		player["row"] = next_row
+		_record_player_history()
 		return true
 	if next_tile == TILE_EMPTY:
 		player["drawing"] = true
@@ -459,6 +481,7 @@ func _step_player() -> bool:
 		grid[next_row][next_col] = TILE_TRAIL
 		player["trail"] = [{"col": next_col, "row": next_row}]
 		player["trail_keys"] = {next_key: true}
+		_record_player_history()
 		_on_player_slice()
 		return true
 	return false
@@ -502,10 +525,11 @@ func _finish_trail() -> void:
 
 	if capture_percent >= capture_goal:
 		score += int(capture_percent) * 25 * level
+		lives = min(MAX_LIVES, lives + 1)
 		state_name = "level_clear"
 		state_timer = 0.0
 		banner_text = "LEVEL %d CLEARED" % level
-		banner_timer = 2.5
+		banner_timer = 999.0
 		_play_sfx("level_clear")
 
 
@@ -579,7 +603,7 @@ func _nearest_empty_cell(point: Vector2) -> Dictionary:
 func _update_enemies(delta: float) -> float:
 	var max_danger := 0.0
 	for enemy in enemies:
-		var speed_mult := 1.0 + level * 0.04
+		var speed_mult := (1.0 + level * 0.04) * _enemy_speed_scale()
 		if _effect_active("rush"):
 			speed_mult *= 1.08
 		if _effect_active("hex"):
@@ -600,7 +624,7 @@ func _update_enemies(delta: float) -> float:
 		enemy["x"] = next_x
 		enemy["y"] = next_y
 		enemy["history"].push_front({"x": next_x, "y": next_y, "angle": enemy["angle"]})
-		while enemy["history"].size() > 9:
+		while enemy["history"].size() > 20:
 			enemy["history"].pop_back()
 
 		if player["drawing"] and _enemy_hits_trail(enemy):
@@ -659,7 +683,7 @@ func _update_sparks(delta: float) -> float:
 	var max_danger := 0.0
 	var distances := _build_safe_distance_map(_spark_targets())
 	for spark in sparks:
-		var speed := SPARK_SPEED + level * 0.22
+		var speed := (SPARK_SPEED + level * 0.22) * _enemy_speed_scale()
 		if _effect_active("hex"):
 			speed *= 1.28
 		spark["progress"] += delta * speed
@@ -670,7 +694,7 @@ func _update_sparks(delta: float) -> float:
 			spark["col"] = next["col"]
 			spark["row"] = next["row"]
 			spark["history"].push_front({"col": spark["col"], "row": spark["row"]})
-			while spark["history"].size() > 8:
+			while spark["history"].size() > 10:
 				spark["history"].pop_back()
 
 			if player["drawing"] and grid[spark["row"]][spark["col"]] == TILE_TRAIL:
@@ -778,7 +802,7 @@ func _update_pickups(delta: float) -> void:
 
 
 func _spawn_rail_pickup() -> void:
-	rail_pickup_timer = rng.randf_range(5.0, 8.0)
+	rail_pickup_timer = _roll_pickup_timer(5.0, 8.0)
 	if _count_pickups_for_zone("rail") >= 1:
 		return
 	var cell = _random_safe_pickup_cell()
@@ -801,7 +825,7 @@ func _spawn_rail_pickup() -> void:
 
 
 func _spawn_field_pickup() -> void:
-	field_pickup_timer = rng.randf_range(5.8, 8.6)
+	field_pickup_timer = _roll_pickup_timer(5.8, 8.6)
 	if _count_pickups_for_zone("field") >= 1:
 		return
 	var cell = _random_empty_field_cell()
@@ -1062,6 +1086,8 @@ func _trail_color() -> Color:
 
 func _load_backgrounds() -> void:
 	background_paths.clear()
+	for key in background_pools.keys():
+		background_pools[key].clear()
 	var dir := DirAccess.open("res://backgrounds")
 	if dir == null:
 		return
@@ -1074,18 +1100,61 @@ func _load_backgrounds() -> void:
 			continue
 		var extension := file.get_extension().to_lower()
 		if extension in ["jpg", "jpeg", "png", "webp"]:
-			background_paths.append("res://backgrounds/%s" % file)
+			var path := "res://backgrounds/%s" % file
+			background_paths.append(path)
+			background_pools["random"].append(path)
+			var lower := file.to_lower()
+			if lower.begins_with("pup"):
+				background_pools["aww"].append(path)
+			elif lower.begins_with("funny"):
+				background_pools["funny"].append(path)
+			elif lower.begins_with("pinup"):
+				background_pools["pinup"].append(path)
 	dir.list_dir_end()
 
 
 func _pick_background_texture() -> Texture2D:
-	if background_paths.is_empty():
+	var pool: Array = background_pools.get(reveal_pool, [])
+	if pool.is_empty():
+		pool = background_paths
+	if pool.is_empty():
 		return null
-	var path: String = background_paths[rng.randi_range(0, background_paths.size() - 1)]
+	var path: String = pool[rng.randi_range(0, pool.size() - 1)]
 	var image := Image.new()
 	if image.load(ProjectSettings.globalize_path(path)) != OK:
 		return null
 	return ImageTexture.create_from_image(image)
+
+
+func _assign_background_texture(texture: Texture2D) -> void:
+	current_background = texture
+	current_background_gray = _make_grayscale_texture(texture)
+
+
+func _make_grayscale_texture(texture: Texture2D) -> Texture2D:
+	if texture == null:
+		return null
+	var image: Image = texture.get_image()
+	if image == null or image.is_empty():
+		return null
+	var grayscale: Image = image.duplicate()
+	grayscale.convert(Image.FORMAT_RGBA8)
+	for y in range(grayscale.get_height()):
+		for x in range(grayscale.get_width()):
+			var color: Color = grayscale.get_pixel(x, y)
+			var luminance: float = color.r * 0.299 + color.g * 0.587 + color.b * 0.114
+			grayscale.set_pixel(x, y, Color(luminance, luminance, luminance, color.a))
+	return ImageTexture.create_from_image(grayscale)
+
+
+func _build_grain_texture() -> void:
+	var image := Image.create(160, 120, false, Image.FORMAT_RGBA8)
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			var shade := rng.randf_range(0.28, 0.72)
+			var alpha := rng.randf_range(0.04, 0.18)
+			image.set_pixel(x, y, Color(shade, shade, shade, alpha))
+	grain_texture = ImageTexture.create_from_image(image)
 
 
 func _build_audio() -> void:
@@ -1114,12 +1183,13 @@ func _build_audio() -> void:
 func _update_audio_mix() -> void:
 	if music_player == null or danger_player == null:
 		return
-	if not music_enabled:
+	if not music_enabled or music_volume <= 0.01:
 		music_player.volume_db = -50.0
 		danger_player.volume_db = -50.0
 		return
-	music_player.volume_db = lerpf(-15.0, -4.0, clamp(1.0 - danger_level * 0.75, 0.0, 1.0))
-	danger_player.volume_db = lerpf(-36.0, -7.5, danger_level)
+	var volume_db := linear_to_db(max(0.001, music_volume))
+	music_player.volume_db = lerpf(-15.0, -4.0, clamp(1.0 - danger_level * 0.75, 0.0, 1.0)) + volume_db
+	danger_player.volume_db = lerpf(-36.0, -7.5, danger_level) + volume_db
 
 
 func _play_sfx(name: String) -> void:
@@ -1163,9 +1233,23 @@ func _load_progress() -> void:
 	if config.load(SAVE_PATH) != OK:
 		high_score = 0
 		music_enabled = true
+		music_volume = 0.7
+		speed_setting = 2
+		magic_mode = "more"
+		reveal_pool = DEFAULT_REVEAL_POOL
+		cheat_enabled = false
 		return
 	high_score = int(config.get_value("scores", "high_score", 0))
 	music_enabled = bool(config.get_value("settings", "music", true))
+	music_volume = clamp(float(config.get_value("settings", "volume", 0.7)), 0.0, 1.0)
+	speed_setting = clamp(int(config.get_value("settings", "speed", 2)), 1, 10)
+	magic_mode = str(config.get_value("settings", "magic", "more"))
+	if magic_mode not in ["more", "normal"]:
+		magic_mode = "more"
+	reveal_pool = str(config.get_value("settings", "reveal_pool", DEFAULT_REVEAL_POOL))
+	if reveal_pool not in SETTING_POOLS:
+		reveal_pool = DEFAULT_REVEAL_POOL
+	cheat_enabled = bool(config.get_value("settings", "cheat", false))
 
 
 func _save_progress() -> void:
@@ -1173,7 +1257,126 @@ func _save_progress() -> void:
 	var config := ConfigFile.new()
 	config.set_value("scores", "high_score", high_score)
 	config.set_value("settings", "music", music_enabled)
+	config.set_value("settings", "volume", music_volume)
+	config.set_value("settings", "speed", speed_setting)
+	config.set_value("settings", "magic", magic_mode)
+	config.set_value("settings", "reveal_pool", reveal_pool)
+	config.set_value("settings", "cheat", cheat_enabled)
 	config.save(SAVE_PATH)
+
+
+func _roll_pickup_timer(minimum: float, maximum: float) -> float:
+	var interval := rng.randf_range(minimum, maximum)
+	if magic_mode == "normal":
+		interval *= 2.0
+	return interval
+
+
+func _player_speed_scale() -> float:
+	return 0.65 + speed_setting * 0.18
+
+
+func _enemy_speed_scale() -> float:
+	return 0.28 if cheat_enabled else 1.0
+
+
+func _record_player_history() -> void:
+	if player.is_empty():
+		return
+	var history: Array = player.get("history", [])
+	history.push_front({"pos": _player_position(), "drawing": player.get("drawing", false)})
+	while history.size() > 12:
+		history.pop_back()
+	player["history"] = history
+
+
+func _advance_after_level_clear() -> void:
+	if state_name != "level_clear":
+		return
+	banner_timer = 0.0
+	if level >= FINAL_LEVEL:
+		_enter_game_over(true)
+	else:
+		_start_level(level + 1)
+
+
+func _pool_label(pool: String) -> String:
+	match pool:
+		"aww":
+			return "Aww"
+		"funny":
+			return "Funny"
+		"pinup":
+			return "Pinup"
+		_:
+			return "Random"
+
+
+func _options_visible() -> bool:
+	return state_name in ["title", "paused", "game_over"]
+
+
+func _options_panel_rect() -> Rect2:
+	var width: float = 342.0
+	var x: float = min(size.x - width - 38.0, BOARD_RECT.end.x + 84.0)
+	var y: float = 152.0 if state_name == "title" else 186.0
+	return Rect2(Vector2(max(28.0, x), y), Vector2(width, 406.0))
+
+
+func _options_control_rect(index: int) -> Rect2:
+	var panel := _options_panel_rect()
+	return Rect2(panel.position + Vector2(160.0, 58.0 + index * 52.0), Vector2(panel.size.x - 186.0, 34.0))
+
+
+func _control_step_rect(base: Rect2, side: String) -> Rect2:
+	if side == "left":
+		return Rect2(base.position, Vector2(32.0, base.size.y))
+	return Rect2(Vector2(base.end.x - 32.0, base.position.y), Vector2(32.0, base.size.y))
+
+
+func _cycle_reveal_pool(step: int) -> void:
+	var index := SETTING_POOLS.find(reveal_pool)
+	if index == -1:
+		index = 0
+	reveal_pool = SETTING_POOLS[posmod(index + step, SETTING_POOLS.size())]
+	_save_progress()
+	if state_name != "playing":
+		_assign_background_texture(_pick_background_texture())
+
+
+func _handle_option_click(point: Vector2) -> bool:
+	if not _options_visible() or not _options_panel_rect().has_point(point):
+		return false
+	var speed_rect := _options_control_rect(0)
+	var magic_rect := _options_control_rect(1)
+	var pool_rect := _options_control_rect(2)
+	var cheat_rect := _options_control_rect(3)
+	var music_rect := _options_control_rect(4)
+	var volume_rect := _options_control_rect(5)
+	if _control_step_rect(speed_rect, "left").has_point(point):
+		speed_setting = max(1, speed_setting - 1)
+	elif _control_step_rect(speed_rect, "right").has_point(point):
+		speed_setting = min(10, speed_setting + 1)
+	elif magic_rect.has_point(point):
+		magic_mode = "normal" if magic_mode == "more" else "more"
+	elif _control_step_rect(pool_rect, "left").has_point(point):
+		_cycle_reveal_pool(-1)
+	elif _control_step_rect(pool_rect, "right").has_point(point):
+		_cycle_reveal_pool(1)
+	elif cheat_rect.has_point(point):
+		cheat_enabled = not cheat_enabled
+	elif music_rect.has_point(point):
+		music_enabled = not music_enabled
+	elif _control_step_rect(volume_rect, "left").has_point(point):
+		music_volume = max(0.0, music_volume - 0.1)
+	elif _control_step_rect(volume_rect, "right").has_point(point):
+		music_volume = min(1.0, music_volume + 0.1)
+	else:
+		return true
+	music_volume = snappedf(music_volume, 0.1)
+	_update_audio_mix()
+	_save_progress()
+	return true
 
 
 func _build_ui() -> void:
@@ -1274,14 +1477,17 @@ func _draw() -> void:
 	_draw_backdrop()
 	_draw_board()
 	_draw_particles()
-	_draw_enemies()
-	_draw_sparks()
-	_draw_pickups()
-	_draw_player()
+	if state_name != "level_clear":
+		_draw_enemies()
+		_draw_sparks()
+		_draw_pickups()
+		_draw_player()
 	_draw_floaters()
 	if state_name != "title":
 		_draw_hud()
 	_draw_overlay()
+	if _options_visible():
+		_draw_options_panel()
 	if flash_strength > 0.0:
 		var overlay := flash_color
 		overlay.a = min(0.42, flash_strength)
@@ -1340,40 +1546,52 @@ func _draw_board() -> void:
 	var board := BOARD_RECT
 	var frame := board.grow(28.0)
 	var outer := frame.grow(16.0)
+	var reveal_complete := state_name == "level_clear" or (state_name == "game_over" and run_won)
 	draw_rect(_shift_rect(outer, camera_offset * 0.38), _with_alpha(_theme_color("bg_c"), 0.055), true)
 	draw_rect(_shift_rect(frame, camera_offset * 0.3), _with_alpha(Color("0e0817"), 0.92), true)
 	draw_rect(_shift_rect(board, camera_offset * 0.2), _with_alpha(Color("02040a"), 0.88), true)
-	if current_background != null:
-		var bg_alpha := 0.54 if state_name == "title" else 0.98
-		draw_texture_rect(current_background, _shift_rect(board, camera_offset * 0.12), false, Color(1, 1, 1, bg_alpha))
+	var board_rect := _shift_rect(board, camera_offset * 0.12)
+	if reveal_complete:
+		if current_background != null:
+			draw_texture_rect(current_background, board_rect, false, Color(1, 1, 1, 1.0))
+		draw_rect(board_rect, Color(1, 1, 1, 0.05), true)
+	else:
+		if current_background_gray != null:
+			var gray_alpha := 0.46 if state_name == "title" else 0.92
+			draw_texture_rect(current_background_gray, board_rect, false, Color(1, 1, 1, gray_alpha))
+		if grain_texture != null:
+			draw_texture_rect(grain_texture, board_rect, true, Color(1, 1, 1, 0.18 if state_name == "title" else 0.26))
+		draw_rect(board_rect, Color(0.02, 0.03, 0.05, 0.24 if state_name == "title" else 0.18), true)
 
 	for scan in range(18):
 		var scan_y := board.position.y + 12.0 + scan * ((board.size.y - 24.0) / 17.0)
-		draw_rect(Rect2(Vector2(board.position.x + 8.0, scan_y), Vector2(board.size.x - 16.0, 2.0)), _with_alpha(Color.WHITE, 0.018), true)
+		draw_rect(Rect2(Vector2(board.position.x + 8.0, scan_y), Vector2(board.size.x - 16.0, 2.0)), _with_alpha(Color.WHITE, 0.014 if reveal_complete else 0.018), true)
 
-	for row in range(ROWS):
-		for col in range(COLS):
-			var rect: Rect2 = _shift_rect(_cell_rect(col, row), camera_offset * 0.24)
-			match grid[row][col]:
-				TILE_EMPTY:
-					var empty_color := Color("060912")
-					empty_color.a = 0.96
-					draw_rect(rect, empty_color, true)
-					if (col + row) % 2 == 0:
-						draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.012), true)
-				TILE_SAFE:
-					var claim_color := _theme_color("claim_fill")
-					claim_color.a = 0.04
-					draw_rect(rect, claim_color, true)
-					draw_rect(rect.grow(-1.5), _with_alpha(Color.WHITE, 0.03), true)
-					draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.22), false, 1.0)
-					if (col + row) % 2 == 0:
+	if not reveal_complete:
+		for row in range(ROWS):
+			for col in range(COLS):
+				var rect: Rect2 = _shift_rect(_cell_rect(col, row), camera_offset * 0.24)
+				match grid[row][col]:
+					TILE_EMPTY:
+						var empty_color := Color("070b12")
+						empty_color.a = 0.78
+						draw_rect(rect, empty_color, true)
+						if (col + row) % 2 == 0:
+							draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.018), true)
+					TILE_SAFE:
+						var claim_color := _theme_color("claim_fill")
+						claim_color.a = 0.12
+						draw_rect(rect, claim_color, true)
+						draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.24), false, 1.0)
 						draw_rect(Rect2(rect.position + Vector2(2.0, 2.0), Vector2(rect.size.x - 4.0, 3.0)), _with_alpha(Color.WHITE, 0.05), true)
-				TILE_TRAIL:
-					var pulse := _trail_color()
-					pulse.a = 0.94
-					draw_rect(rect.grow(-2.0), pulse, true)
-					draw_rect(rect.grow(-0.75), Color.WHITE, false, 1.0)
+					TILE_TRAIL:
+						var pulse := _trail_color()
+						pulse.a = 0.94
+						draw_rect(rect.grow(-2.0), pulse, true)
+						draw_rect(rect.grow(-0.75), Color.WHITE, false, 1.0)
+	else:
+		draw_rect(_shift_rect(board, camera_offset * 0.18), _with_alpha(Color.WHITE, 0.08), true)
+		draw_rect(_shift_rect(board.grow(-10.0), camera_offset * 0.08), _with_alpha(Color.BLACK, 0.04), false, 2.0)
 
 	draw_rect(_shift_rect(board, camera_offset * 0.18), _with_alpha(_theme_color("rail"), 0.54), false, 3.0)
 	draw_rect(_shift_rect(board.grow(-12.0), camera_offset * 0.08), _with_alpha(_theme_color("trail_a"), 0.08), false, 2.0)
@@ -1399,17 +1617,26 @@ func _draw_player() -> void:
 		shell = Color("ffe561")
 	if _effect_active("hex"):
 		shell = Color("ff6185")
+	var history: Array = player.get("history", [])
+	for index in range(history.size() - 1, -1, -1):
+		var ghost = history[index]
+		var alpha := float(index + 1) / float(history.size() + 1)
+		var ghost_pos: Vector2 = ghost["pos"] + camera_offset * 0.72
+		draw_circle(ghost_pos, 14.0 + alpha * 6.0, _with_alpha(shell, alpha * 0.1))
+		draw_circle(ghost_pos - dir * (6.0 + alpha * 6.0), 8.0 + alpha * 3.0, _with_alpha(shell.lerp(Color.WHITE, 0.2), alpha * 0.08))
 	var tail_color := shell.lerp(Color("ff8ad0"), 0.35)
-	draw_circle(pos, 20.0, _with_alpha(shell, 0.15))
-	var nose := pos + dir * 15.0
-	var left := pos + perp * 8.4 - dir * 2.0
-	var right := pos - perp * 8.4 - dir * 2.0
-	var tail := pos - dir * 12.0
+	draw_circle(pos, 24.0, _with_alpha(shell, 0.15))
+	draw_circle(pos - dir * 10.0, 18.0, _with_alpha(tail_color, 0.08))
+	var nose := pos + dir * 16.0
+	var left := pos + perp * 9.2 - dir * 1.0
+	var right := pos - perp * 9.2 - dir * 1.0
+	var tail := pos - dir * 15.0
 	var body := PackedVector2Array([nose, left, tail, right])
 	draw_colored_polygon(body, shell)
-	draw_colored_polygon(PackedVector2Array([pos + dir * 6.0, pos + perp * 4.0, pos - dir * 6.5, pos - perp * 4.0]), tail_color)
+	draw_colored_polygon(PackedVector2Array([pos + dir * 7.0, pos + perp * 4.2, pos - dir * 9.5, pos - perp * 4.2]), tail_color)
+	draw_colored_polygon(PackedVector2Array([tail - dir * 8.0, pos - perp * 3.4 - dir * 8.0, pos + perp * 3.4 - dir * 8.0]), _with_alpha(tail_color, 0.9))
 	draw_colored_polygon(PackedVector2Array([nose - dir * 3.0 + perp * 3.2, nose - dir * 6.6, nose - dir * 3.0 - perp * 3.2]), core)
-	draw_line(pos - perp * 5.0 - dir * 1.5, pos + perp * 5.0 - dir * 1.5, _with_alpha(Color.WHITE, 0.26), 1.4)
+	draw_line(pos - perp * 5.0 - dir * 1.5, pos + perp * 5.0 - dir * 1.5, _with_alpha(Color.WHITE, 0.34), 1.6)
 	draw_circle(pos - dir * 1.0, 2.7, Color("1c1329"))
 	draw_circle(pos + dir * 2.8 + perp * 1.2, 1.8, _with_alpha(Color.WHITE, 0.42))
 	if _effect_active("shield"):
@@ -1422,37 +1649,45 @@ func _draw_enemies() -> void:
 		var history: Array = enemy["history"]
 		if history.is_empty():
 			history = [{"x": enemy["x"], "y": enemy["y"], "angle": enemy["angle"]}]
+		var comet_points := PackedVector2Array()
+		for ghost in history:
+			comet_points.append(Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.58)
+		for index in range(comet_points.size() - 1):
+			var alpha_tail := 1.0 - float(index) / float(max(1, comet_points.size() - 1))
+			var tail_color := Color.from_hsv(fmod(enemy["hue"] + 0.12, 1.0), 0.68, 1.0, alpha_tail * 0.22)
+			draw_line(comet_points[index], comet_points[index + 1], tail_color, 15.0 * alpha_tail + 2.4)
+			draw_line(comet_points[index], comet_points[index + 1], _with_alpha(Color.WHITE, alpha_tail * 0.06), 5.0 * alpha_tail + 1.0)
 		for index in range(history.size() - 1, -1, -1):
 			var ghost = history[index]
 			var alpha: float = float(index + 1) / float(history.size() + 1)
-			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.22)
-			var glow_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, alpha * 0.18)
+			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.18)
+			var glow_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, alpha * 0.15)
 			var a_dir := Vector2(cos(ghost["angle"]), sin(ghost["angle"]))
 			var b_dir := Vector2(cos(ghost["angle"] + PI * 0.5), sin(ghost["angle"] + PI * 0.5))
 			var center := Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.7
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(glow, glow.a * 0.65), 5.4)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(glow_b, glow_b.a * 0.6), 4.4)
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 2.8)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow_b, 2.2)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(glow, glow.a * 0.72), 7.0)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(glow_b, glow_b.a * 0.68), 5.6)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 3.2)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow_b, 2.6)
 
 		var center_now := Vector2(enemy["x"], enemy["y"]) + camera_offset
 		var bloom := Color.from_hsv(enemy["hue"], 0.75, 1.0, 0.16 + danger_level * 0.1)
-		draw_circle(center_now, 28.0, _with_alpha(bloom, bloom.a * 0.45))
-		draw_circle(center_now, 19.0, bloom)
+		draw_circle(center_now, 34.0, _with_alpha(bloom, bloom.a * 0.42))
+		draw_circle(center_now, 24.0, _with_alpha(bloom, 0.18))
 		var segments := _qix_segments(enemy)
 		var line_a := Color.from_hsv(enemy["hue"], 0.58, 1.0, 0.95)
 		var line_b := Color.from_hsv(fmod(enemy["hue"] + 0.18, 1.0), 0.55, 1.0, 0.9)
-		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, _with_alpha(line_a, 0.34), 6.0)
-		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, _with_alpha(line_b, 0.3), 5.0)
-		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, line_a, 3.2)
-		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, line_b, 2.6)
-		var ring_radius: float = 11.0 + sin(title_phase * 4.2 + enemy["hue"] * TAU) * 1.6
-		draw_arc(center_now, ring_radius, 0.0, TAU, 36, _with_alpha(line_a, 0.34), 1.2, true)
+		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, _with_alpha(line_a, 0.28), 8.6)
+		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, _with_alpha(line_b, 0.24), 7.0)
+		draw_line(segments[0]["a"] + camera_offset, segments[0]["b"] + camera_offset, line_a, 3.8)
+		draw_line(segments[1]["a"] + camera_offset, segments[1]["b"] + camera_offset, line_b, 3.0)
+		var ring_radius: float = 12.0 + sin(title_phase * 4.2 + enemy["hue"] * TAU) * 1.8
+		draw_arc(center_now, ring_radius, 0.0, TAU, 40, _with_alpha(line_a, 0.38), 1.6, true)
 		for ray in range(4):
 			var ray_angle: float = enemy["angle"] + ray * PI * 0.5 + sin(title_phase * 2.4 + ray) * 0.08
 			var ray_dir := Vector2(cos(ray_angle), sin(ray_angle))
-			draw_line(center_now + ray_dir * 3.0, center_now + ray_dir * 10.0, _with_alpha(line_b, 0.42), 1.5)
-		draw_circle(center_now, 7.4, _theme_color("enemy_core"))
+			draw_line(center_now + ray_dir * 3.0, center_now + ray_dir * 12.0, _with_alpha(line_b, 0.42), 1.7)
+		draw_circle(center_now, 9.0, _theme_color("enemy_core"))
 		draw_circle(center_now, 3.1, Color("120816"))
 		draw_circle(center_now, 1.2, Color.WHITE)
 
@@ -1556,7 +1791,7 @@ func _draw_hud() -> void:
 		{"label": "Lives", "value": str(lives), "accent": Color("fff0d1"), "size": 26},
 		{"label": "Claimed", "value": "%d%%" % int(capture_percent), "accent": Color("fff4db"), "size": 25},
 		{"label": "Goal", "value": "%d%%" % capture_goal, "accent": Color("c8fff6"), "size": 25},
-		{"label": "Theme", "value": current_theme.get("name", "Arcade"), "accent": Color("d7f8ff"), "size": 17}
+		{"label": "Reveal", "value": _pool_label(reveal_pool), "accent": Color("d7f8ff"), "size": 19}
 	]
 	for index in range(cards.size()):
 		var card = cards[index]
@@ -1613,12 +1848,17 @@ func _draw_overlay() -> void:
 		_draw_centered_label(Vector2(cta.get_center().x, cta.position.y + 35.0), "PRESS SPACE OR ENTER TO START", 21, Color("67213c"))
 		var strip := Rect2(Vector2(BOARD_RECT.position.x + 82.0, BOARD_RECT.end.y + 26.0), Vector2(BOARD_RECT.size.x - 164.0, 56.0))
 		_draw_panel(strip, Color("10182a", 0.68), _with_alpha(Color("7ef9ff"), 0.16))
-		_draw_centered_label(Vector2(strip.get_center().x, strip.position.y + 35.0), "WASD MOVE   |   CUT, RECONNECT, CLAIM   |   P PAUSE   |   M MUSIC", 18, Color("e6fbff"))
+		_draw_centered_label(Vector2(strip.get_center().x, strip.position.y + 35.0), "WASD MOVE   |   CUT, RECONNECT, CLAIM   |   P PAUSE   |   OPTIONS ON THE RIGHT", 18, Color("e6fbff"))
 	elif state_name == "paused":
 		var modal := Rect2(Vector2(size.x * 0.5 - 224.0, size.y * 0.5 - 96.0), Vector2(448.0, 188.0))
 		_draw_panel(modal, Color("09101b", 0.8), _with_alpha(_theme_color("rail"), 0.24))
 		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 66.0), "PAUSED", 44, Color("fff7dd"))
 		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 108.0), "Press Esc or P to dive back in", 20, Color("dff7ff"))
+	elif state_name == "level_clear":
+		var modal := Rect2(Vector2(size.x * 0.5 - 260.0, size.y - 214.0), Vector2(520.0, 122.0))
+		_draw_panel(modal, Color("09101b", 0.72), _with_alpha(_theme_color("trail_a"), 0.26))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 48.0), "LEVEL %02d DETONATED" % level, 34, Color("fff7d8"))
+		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 88.0), "Press Space or click to reveal the next board", 18, Color("dffcff"))
 	elif state_name == "death":
 		var modal := Rect2(Vector2(size.x * 0.5 - 228.0, size.y * 0.5 - 84.0), Vector2(456.0, 168.0))
 		_draw_panel(modal, Color("220d13", 0.82), _with_alpha(Color("ff8c73"), 0.24))
@@ -1635,6 +1875,32 @@ func _draw_overlay() -> void:
 			_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 118.0), status_message if status_message != "" else "The board bit back.", 22, Color("ffd4c4"))
 		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 168.0), "Press Space or Enter to run it again", 21, Color("ffe46a"))
 		_draw_centered_label(Vector2(modal.get_center().x, modal.position.y + 198.0), "High score %08d" % high_score, 18, Color("d4faff"))
+
+
+func _draw_options_panel() -> void:
+	var panel := _options_panel_rect()
+	_draw_panel(panel, Color("09101b", 0.8), _with_alpha(_theme_color("rail"), 0.24))
+	_draw_label(panel.position + Vector2(18.0, 28.0), "BETA CONTROLS", 15, Color("ffe68f"))
+	_draw_label(panel.position + Vector2(18.0, 48.0), "Ported from the web main build", 13, Color("adc7d6"))
+	var labels := ["Speed", "Magic", "Reveal Pool", "Cheat Mode", "Music", "Volume"]
+	for index in range(labels.size()):
+		var y := panel.position.y + 81.0 + index * 52.0
+		_draw_label(Vector2(panel.position.x + 18.0, y), labels[index], 16, Color("eef8ff"))
+	var speed_rect := _options_control_rect(0)
+	var magic_rect := _options_control_rect(1)
+	var pool_rect := _options_control_rect(2)
+	var cheat_rect := _options_control_rect(3)
+	var music_rect := _options_control_rect(4)
+	var volume_rect := _options_control_rect(5)
+	_draw_stepper(speed_rect, str(speed_setting))
+	_draw_toggle_pill(magic_rect, "More Magic" if magic_mode == "more" else "Magic", magic_mode == "more")
+	_draw_cycle_pill(pool_rect, _pool_label(reveal_pool))
+	_draw_toggle_pill(cheat_rect, "On" if cheat_enabled else "Off", cheat_enabled)
+	_draw_toggle_pill(music_rect, "On" if music_enabled else "Off", music_enabled)
+	_draw_stepper(volume_rect, "%d%%" % int(round(music_volume * 100.0)))
+	var hint := Rect2(Vector2(panel.position.x + 18.0, panel.end.y - 48.0), Vector2(panel.size.x - 36.0, 28.0))
+	draw_rect(hint, _with_alpha(Color.WHITE, 0.04), true)
+	_draw_centered_label(Vector2(hint.get_center().x, hint.position.y + 19.0), "Pause during a run to change these.", 13, Color("ccecff"))
 
 
 func _draw_label(position: Vector2, text: String, font_size: int, color: Color) -> void:
@@ -1721,6 +1987,31 @@ func _draw_cookie_icon(pos: Vector2, pulse: float) -> void:
 	draw_circle(pos + Vector2(1.6, 3.3) * scale, 2.0 * scale, Color("6f3d1a"))
 	draw_circle(pos + Vector2(-4.0, 2.6) * scale, 1.5 * scale, Color("7a4520"))
 	draw_circle(pos + Vector2(-1.2, -3.2) * scale, 1.6 * scale, _with_alpha(Color.WHITE, 0.18))
+
+
+func _draw_toggle_pill(rect: Rect2, text: String, active: bool) -> void:
+	var fill := Color("133449", 0.82) if active else Color("221928", 0.82)
+	var stroke := _with_alpha(Color("8dfcff"), 0.28) if active else _with_alpha(Color("ffb8d0"), 0.24)
+	_draw_panel(rect, fill, stroke)
+	_draw_centered_label(Vector2(rect.get_center().x, rect.position.y + 23.0), text, 15, Color("f6fdff"))
+
+
+func _draw_stepper(rect: Rect2, value: String) -> void:
+	var left := _control_step_rect(rect, "left")
+	var right := _control_step_rect(rect, "right")
+	var center := Rect2(rect.position + Vector2(34.0, 0.0), Vector2(rect.size.x - 68.0, rect.size.y))
+	_draw_toggle_pill(left, "-", false)
+	_draw_toggle_pill(center, value, true)
+	_draw_toggle_pill(right, "+", false)
+
+
+func _draw_cycle_pill(rect: Rect2, value: String) -> void:
+	var left := _control_step_rect(rect, "left")
+	var right := _control_step_rect(rect, "right")
+	var center := Rect2(rect.position + Vector2(34.0, 0.0), Vector2(rect.size.x - 68.0, rect.size.y))
+	_draw_toggle_pill(left, "<", false)
+	_draw_toggle_pill(center, value, true)
+	_draw_toggle_pill(right, ">", false)
 
 
 func _draw_panel(rect: Rect2, fill: Color, stroke: Color) -> void:
