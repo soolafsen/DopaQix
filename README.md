@@ -2,20 +2,12 @@
 
 Native Godot 4 Windows build of DopaQix, rebuilt for louder combat feedback, animated pickups, brighter player and enemy presentation, and a no-nonsense download, unzip, and play flow.
 
-## Get The Game
+## Play Now
 
-[Download DopaQiX Native ZIP](https://github.com/soolafsen/DopaQix/raw/refs/heads/codex/DopaQiXnative/dist/DopaQiXNative-win64.zip)
-
-That link should start the ZIP download directly.
-
-## How To Play
-
-1. Click **Download DopaQiX Native ZIP** above.
-2. Open your `Downloads` folder.
-3. Find `DopaQiXNative-win64.zip`.
-4. Extract or unzip it with Windows or a tool like 7-Zip.
-5. Open the extracted folder.
-6. Double-click `DopaQiXNative.exe`.
+1. Go to [Releases](https://github.com/soolafsen/DopaQix/releases).
+2. Download `DopaQiXNative-win64.zip`.
+3. Unzip it.
+4. Double-click `DopaQiXNative.exe`.
 
 No Godot install is required for players.
 
