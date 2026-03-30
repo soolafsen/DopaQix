@@ -19,6 +19,11 @@ const MOVE_INTERVAL := 0.088
 const SPARK_SPEED := 5.3
 const ENEMY_SPEED_MIN := 122.0
 const ENEMY_SPEED_MAX := 182.0
+const ENEMY_HISTORY_LENGTH := 7
+const SPARK_HISTORY_LENGTH := 6
+const ENEMY_RESIDUE_DROP_INTERVAL := 0.055
+const ENEMY_RESIDUE_MAX := 180
+const ENEMY_RESIDUE_LIFE := 1.1
 const START_LIVES := 3
 const MAX_LIVES := 5
 const START_GOAL := 50
@@ -158,14 +163,16 @@ func _process(delta: float) -> void:
 	title_phase += delta
 	state_timer += delta
 	banner_timer = max(0.0, banner_timer - delta)
-	flash_strength = move_toward(flash_strength, 0.0, delta * 1.9)
-	shake_strength = move_toward(shake_strength, 0.0, delta * 18.0)
 	slice_sound_cooldown = max(0.0, slice_sound_cooldown - delta)
+	if state_name != "level_clear":
+		flash_strength = move_toward(flash_strength, 0.0, delta * 1.9)
+		shake_strength = move_toward(shake_strength, 0.0, delta * 18.0)
 	camera_offset = Vector2.ZERO
 	if shake_strength > 0.01:
 		camera_offset = Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * shake_strength
 
-	_update_effects(delta)
+	if state_name != "level_clear":
+		_update_effects(delta)
 	_update_audio_mix()
 	_layout_ui()
 	_refresh_ui()
@@ -212,10 +219,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if state_name == "level_clear":
 			_advance_after_level_clear()
 			return
-	if event.is_action_pressed("accept"):
-		if state_name == "level_clear":
-			_advance_after_level_clear()
-			return
+	if state_name == "level_clear" and _is_level_clear_continue_event(event):
+		_advance_after_level_clear()
+		return
 	if event.is_action_pressed("pause"):
 		if state_name in ["playing", "paused"]:
 			_toggle_pause()
@@ -357,33 +363,16 @@ func _spawn_enemies() -> void:
 	var count := 1 + int(level >= 3) + int(level >= 5)
 	count = min(count, 3)
 	for index in range(count):
-		var spawn := _enemy_spawn_position(index, count)
-		var angle := rng.randf_range(0.0, TAU)
-		var speed := rng.randf_range(ENEMY_SPEED_MIN, ENEMY_SPEED_MAX) + level * 8.0
-		enemies.append(
-			{
-				"x": spawn.x,
-				"y": spawn.y,
-				"vx": cos(angle) * speed,
-				"vy": sin(angle) * speed,
-				"angle": rng.randf_range(0.0, TAU),
-				"spin": rng.randf_range(1.6, 2.8) * (-1.0 if rng.randf() < 0.5 else 1.0),
-				"arm_a": rng.randf_range(26.0, 52.0),
-				"arm_b": rng.randf_range(18.0, 46.0),
-				"hue": rng.randf(),
-				"history": [],
-				"residue_clock": 0.0
-			}
-		)
+		enemies.append(_create_enemy(_enemy_spawn_position(index, count)))
 
 
 func _spawn_sparks() -> void:
 	sparks.clear()
 	var count := 2 + int(level >= 4)
 	var positions := [
-		{"col": 0, "row": 0, "dir": Vector2i.RIGHT},
-		{"col": COLS - 1, "row": 0, "dir": Vector2i.LEFT},
-		{"col": COLS - 1, "row": ROWS - 1, "dir": Vector2i.UP}
+		{"col": 0, "row": 0, "dir": Vector2i.RIGHT, "turn_bias": 1},
+		{"col": COLS - 1, "row": 0, "dir": Vector2i.LEFT, "turn_bias": -1},
+		{"col": COLS - 1, "row": ROWS - 1, "dir": Vector2i.UP, "turn_bias": 1}
 	]
 	for index in range(count):
 		var seed = positions[index]
@@ -392,6 +381,7 @@ func _spawn_sparks() -> void:
 				"col": seed["col"],
 				"row": seed["row"],
 				"dir": seed["dir"],
+				"turn_bias": seed["turn_bias"],
 				"progress": 0.0,
 				"history": [{"col": seed["col"], "row": seed["row"]}]
 			}
@@ -401,12 +391,45 @@ func _spawn_sparks() -> void:
 func _enemy_spawn_position(index: int, total: int) -> Vector2:
 	var interior := BOARD_RECT.grow(-CELL * 4.0)
 	if total == 1:
-		return interior.get_center()
+		return _empty_spawn_position(interior.get_center())
 	if index == 0:
-		return interior.position + Vector2(interior.size.x * 0.7, interior.size.y * 0.25)
+		return _empty_spawn_position(interior.position + Vector2(interior.size.x * 0.7, interior.size.y * 0.25))
 	if index == 1:
-		return interior.position + Vector2(interior.size.x * 0.25, interior.size.y * 0.7)
-	return interior.position + Vector2(interior.size.x * 0.75, interior.size.y * 0.76)
+		return _empty_spawn_position(interior.position + Vector2(interior.size.x * 0.25, interior.size.y * 0.7))
+	return _empty_spawn_position(interior.position + Vector2(interior.size.x * 0.75, interior.size.y * 0.76))
+
+
+func _create_enemy(spawn: Vector2) -> Dictionary:
+	var angle := rng.randf_range(0.0, TAU)
+	var speed := rng.randf_range(ENEMY_SPEED_MIN, ENEMY_SPEED_MAX) + level * 8.0
+	return {
+		"x": spawn.x,
+		"y": spawn.y,
+		"vx": cos(angle) * speed,
+		"vy": sin(angle) * speed,
+		"angle": rng.randf_range(0.0, TAU),
+		"spin": rng.randf_range(1.6, 2.8) * (-1.0 if rng.randf() < 0.5 else 1.0),
+		"arm_a": rng.randf_range(26.0, 52.0),
+		"arm_b": rng.randf_range(18.0, 46.0),
+		"hue": rng.randf(),
+		"history": [{"x": spawn.x, "y": spawn.y, "angle": rng.randf_range(0.0, TAU)}],
+		"residue_clock": 0.0
+	}
+
+
+func _empty_spawn_position(preferred: Vector2) -> Vector2:
+	var preferred_cell := _nearest_empty_cell(preferred)
+	if not preferred_cell.is_empty():
+		return _cell_center(preferred_cell["col"], preferred_cell["row"])
+	var empty_cells := []
+	for row in range(1, ROWS - 1):
+		for col in range(1, COLS - 1):
+			if grid[row][col] == TILE_EMPTY:
+				empty_cells.append({"col": col, "row": row})
+	if empty_cells.is_empty():
+		return preferred
+	var choice = empty_cells[rng.randi_range(0, empty_cells.size() - 1)]
+	return _cell_center(choice["col"], choice["row"])
 
 
 func _update_player(delta: float) -> void:
@@ -475,11 +498,15 @@ func _step_player() -> bool:
 		return false
 
 	if next_tile == TILE_SAFE:
+		if not _is_rail_tile(next_col, next_row):
+			return false
 		player["col"] = next_col
 		player["row"] = next_row
 		_record_player_history()
 		return true
 	if next_tile == TILE_EMPTY:
+		if not _is_rail_tile(int(player["col"]), int(player["row"])):
+			return false
 		player["drawing"] = true
 		player["col"] = next_col
 		player["row"] = next_row
@@ -500,7 +527,27 @@ func _can_move(direction: Vector2i) -> bool:
 	var next_tile: int = int(grid[next_row][next_col])
 	if player["drawing"]:
 		return next_tile == TILE_EMPTY or next_tile == TILE_SAFE
-	return next_tile == TILE_SAFE or next_tile == TILE_EMPTY
+	if next_tile == TILE_SAFE:
+		return _is_rail_tile(next_col, next_row)
+	if next_tile == TILE_EMPTY:
+		return _is_rail_tile(int(player["col"]), int(player["row"]))
+	return false
+
+
+func _is_rail_tile(col: int, row: int) -> bool:
+	if not _inside(col, row) or grid[row][col] != TILE_SAFE:
+		return false
+	for row_offset in range(-1, 2):
+		for col_offset in range(-1, 2):
+			if row_offset == 0 and col_offset == 0:
+				continue
+			var neighbor_col := col + col_offset
+			var neighbor_row := row + row_offset
+			if not _inside(neighbor_col, neighbor_row):
+				return true
+			if grid[neighbor_row][neighbor_col] != TILE_SAFE:
+				return true
+	return false
 
 
 func _on_player_slice() -> void:
@@ -515,6 +562,7 @@ func _finish_trail() -> void:
 	for point in player["trail"]:
 		grid[point["row"]][point["col"]] = TILE_SAFE
 	var claimed := _claim_enclosed_area()
+	_reset_trapped_sparks()
 	player["drawing"] = false
 	player["trail"].clear()
 	player["trail_keys"].clear()
@@ -533,6 +581,10 @@ func _finish_trail() -> void:
 		lives = min(MAX_LIVES, lives + 1)
 		state_name = "level_clear"
 		state_timer = 0.0
+		active_effects = {"rush": 0.0, "shield": 0.0, "hex": 0.0}
+		flash_strength = 0.0
+		shake_strength = 0.0
+		camera_offset = Vector2.ZERO
 		banner_text = "LEVEL %d CLEARED" % level
 		banner_timer = 999.0
 		_play_sfx("level_clear")
@@ -565,31 +617,55 @@ func _claim_enclosed_area() -> int:
 				queue.append({"col": nc, "row": nr})
 
 	var claimed := 0
+	var trapped_indices := []
+	for index in range(enemies.size()):
+		var enemy: Dictionary = enemies[index]
+		var trapped := true
+		for sample in _enemy_occupied_cells(enemy):
+			if reachable[sample["row"]][sample["col"]]:
+				trapped = false
+				break
+		if trapped:
+			trapped_indices.append(index)
 	for row in range(1, ROWS - 1):
 		for col in range(1, COLS - 1):
 			if grid[row][col] == TILE_EMPTY and not reachable[row][col]:
 				grid[row][col] = TILE_SAFE
 				claimed += 1
+	for index in trapped_indices:
+		var enemy: Dictionary = enemies[index]
+		enemies[index] = _create_enemy(_empty_spawn_position(Vector2(enemy["x"], enemy["y"])))
 	return claimed
 
 
 func _enemy_sample_cells(enemy: Dictionary) -> Array:
 	var samples := []
+	for cell in _enemy_occupied_cells(enemy):
+		var nearest := _nearest_empty_cell(_cell_center(cell["col"], cell["row"]))
+		if not nearest.is_empty():
+			samples.append(nearest)
+	return samples
+
+
+func _enemy_occupied_cells(enemy: Dictionary) -> Array:
+	var cells := []
+	var seen := {}
 	var segments := _qix_segments(enemy)
 	var points := [
 		Vector2(enemy["x"], enemy["y"]),
 		segments[0]["a"],
 		segments[0]["b"],
 		segments[1]["a"],
-		segments[1]["b"],
-		(segments[0]["a"] + segments[0]["b"]) * 0.5,
-		(segments[1]["a"] + segments[1]["b"]) * 0.5
+		segments[1]["b"]
 	]
 	for point in points:
-		var cell := _nearest_empty_cell(point)
-		if cell:
-			samples.append(cell)
-	return samples
+		var cell := _point_to_cell(point)
+		var key := _tile_key(cell["col"], cell["row"])
+		if key in seen:
+			continue
+		seen[key] = true
+		cells.append(cell)
+	return cells
 
 
 func _nearest_empty_cell(point: Vector2) -> Dictionary:
@@ -630,13 +706,14 @@ func _update_enemies(delta: float) -> float:
 		enemy["x"] = next_x
 		enemy["y"] = next_y
 		enemy["history"].push_front({"x": next_x, "y": next_y, "angle": enemy["angle"]})
-		while enemy["history"].size() > 30:
+		while enemy["history"].size() > ENEMY_HISTORY_LENGTH:
 			enemy["history"].pop_back()
-		while enemy["residue_clock"] >= 0.05:
-			enemy["residue_clock"] -= 0.05
+		while enemy["residue_clock"] >= ENEMY_RESIDUE_DROP_INTERVAL:
+			enemy["residue_clock"] -= ENEMY_RESIDUE_DROP_INTERVAL
 			_drop_enemy_residue(enemy)
 
-		if player["drawing"] and _enemy_hits_trail(enemy):
+		var enemy_cell := _point_to_cell(Vector2(enemy["x"], enemy["y"]))
+		if player["drawing"] and (grid[enemy_cell["row"]][enemy_cell["col"]] == TILE_TRAIL or _enemy_hits_trail(enemy)):
 			_lose_life("A QiX tore through your cut.")
 			return 1.0
 
@@ -645,6 +722,12 @@ func _update_enemies(delta: float) -> float:
 		if distance < CELL * 0.78 and player["drawing"]:
 			_lose_life("The QiX core caught you.")
 			return 1.0
+	if player["drawing"] and _enemy_residue_at(int(player["col"]), int(player["row"])):
+		_lose_life("The QiX residue burned through you.")
+		return 1.0
+	if _residue_hits_trail():
+		_lose_life("A QiX residue cloud ate your cut.")
+		return 1.0
 	return max_danger
 
 
@@ -690,7 +773,7 @@ func _distance_to_segment(point: Vector2, a: Vector2, b: Vector2) -> float:
 
 func _update_sparks(delta: float) -> float:
 	var max_danger := 0.0
-	var distances := _build_safe_distance_map(_spark_targets())
+	var distances := _build_spark_distance_map(_spark_targets())
 	for spark in sparks:
 		var speed := (SPARK_SPEED + level * 0.22) * _enemy_speed_scale()
 		if _effect_active("hex"):
@@ -699,11 +782,13 @@ func _update_sparks(delta: float) -> float:
 		while spark["progress"] >= 1.0:
 			spark["progress"] -= 1.0
 			var next = _choose_spark_step(spark, distances)
-			spark["dir"] = Vector2i(next["col"] - spark["col"], next["row"] - spark["row"])
+			var next_dir := Vector2i(next["col"] - spark["col"], next["row"] - spark["row"])
+			if next_dir != Vector2i.ZERO:
+				spark["dir"] = next_dir
 			spark["col"] = next["col"]
 			spark["row"] = next["row"]
 			spark["history"].push_front({"col": spark["col"], "row": spark["row"]})
-			while spark["history"].size() > 10:
+			while spark["history"].size() > 6:
 				spark["history"].pop_back()
 
 			if player["drawing"] and grid[spark["row"]][spark["col"]] == TILE_TRAIL:
@@ -720,19 +805,32 @@ func _update_sparks(delta: float) -> float:
 
 func _spark_targets() -> Array:
 	var targets := []
-	if player["drawing"] and not player["trail"].is_empty():
+	var nearby_rail := [
+		{"col": player["col"], "row": player["row"]},
+		{"col": int(player["col"]) + 1, "row": player["row"]},
+		{"col": int(player["col"]) - 1, "row": player["row"]},
+		{"col": player["col"], "row": int(player["row"]) + 1},
+		{"col": player["col"], "row": int(player["row"]) - 1}
+	]
+	for cell in nearby_rail:
+		if _is_spark_tile(cell["col"], cell["row"]):
+			targets.append(cell)
+	if not targets.is_empty():
+		return targets
+	if not player["trail"].is_empty():
 		var head = player["trail"][0]
 		for dir in CARDINALS:
 			var nc: int = int(head["col"]) + dir.x
 			var nr: int = int(head["row"]) + dir.y
-			if _inside(nc, nr) and grid[nr][nc] == TILE_SAFE:
+			if _is_spark_tile(nc, nr):
 				targets.append({"col": nc, "row": nr})
 	if targets.is_empty():
-		targets.append({"col": player["col"], "row": player["row"]})
+		for spark in sparks:
+			targets.append({"col": spark["col"], "row": spark["row"]})
 	return targets
 
 
-func _build_safe_distance_map(targets: Array) -> Array:
+func _build_spark_distance_map(targets: Array) -> Array:
 	var distances := []
 	for row in range(ROWS):
 		var line := []
@@ -742,7 +840,7 @@ func _build_safe_distance_map(targets: Array) -> Array:
 
 	var queue := []
 	for target in targets:
-		if _inside(target["col"], target["row"]) and grid[target["row"]][target["col"]] == TILE_SAFE:
+		if _is_spark_tile(target["col"], target["row"]):
 			distances[target["row"]][target["col"]] = 0
 			queue.append(target)
 
@@ -751,42 +849,111 @@ func _build_safe_distance_map(targets: Array) -> Array:
 		var current = queue[cursor]
 		cursor += 1
 		var base: int = int(distances[current["row"]][current["col"]]) + 1
-		for neighbor in _safe_neighbors(current["col"], current["row"]):
+		for neighbor in _spark_neighbors(current["col"], current["row"]):
 			if base < distances[neighbor["row"]][neighbor["col"]]:
 				distances[neighbor["row"]][neighbor["col"]] = base
 				queue.append(neighbor)
 	return distances
 
 
-func _safe_neighbors(col: int, row: int) -> Array:
+func _spark_neighbors(col: int, row: int) -> Array:
 	var neighbors := []
 	for dir in CARDINALS:
 		var nc: int = col + dir.x
 		var nr: int = row + dir.y
-		if _inside(nc, nr) and grid[nr][nc] == TILE_SAFE:
+		if _is_spark_tile(nc, nr):
 			neighbors.append({"col": nc, "row": nr})
 	return neighbors
 
 
 func _choose_spark_step(spark: Dictionary, distances: Array) -> Dictionary:
-	var best := {"col": spark["col"], "row": spark["row"], "score": 999999.0}
-	var options := _safe_neighbors(spark["col"], spark["row"])
-	for option in options:
-		var score := float(distances[option["row"]][option["col"]])
-		if score >= 999999.0:
-			continue
-		var dir := Vector2i(option["col"] - spark["col"], option["row"] - spark["row"])
-		if dir == spark["dir"]:
-			score -= 0.15
-		elif dir == -spark["dir"]:
-			score += 0.25
-		if score < best["score"]:
-			best = {"col": option["col"], "row": option["row"], "score": score}
-	if best["score"] < 999999.0:
-		return {"col": best["col"], "row": best["row"]}
-	if not options.is_empty():
-		return options[rng.randi_range(0, options.size() - 1)]
+	var neighbors := _spark_neighbors(spark["col"], spark["row"])
+	if not neighbors.is_empty():
+		var best_distance := 999999
+		for neighbor in neighbors:
+			best_distance = min(best_distance, int(distances[neighbor["row"]][neighbor["col"]]))
+		if best_distance < 999999:
+			var best_neighbors := []
+			for neighbor in neighbors:
+				if int(distances[neighbor["row"]][neighbor["col"]]) == best_distance:
+					best_neighbors.append(neighbor)
+			for neighbor in best_neighbors:
+				var dir := Vector2i(neighbor["col"] - spark["col"], neighbor["row"] - spark["row"])
+				if dir == spark["dir"]:
+					return neighbor
+			return best_neighbors[0]
+
+	var forward := {"col": spark["col"] + spark["dir"].x, "row": spark["row"] + spark["dir"].y}
+	var turn_primary_dir := _rotate_direction(spark["dir"], int(spark.get("turn_bias", 1)))
+	var primary := {"col": spark["col"] + turn_primary_dir.x, "row": spark["row"] + turn_primary_dir.y}
+	var turn_secondary_dir := _rotate_direction(spark["dir"], -int(spark.get("turn_bias", 1)))
+	var secondary := {"col": spark["col"] + turn_secondary_dir.x, "row": spark["row"] + turn_secondary_dir.y}
+	var back := {"col": spark["col"] - spark["dir"].x, "row": spark["row"] - spark["dir"].y}
+	for option in [forward, primary, secondary, back]:
+		if _is_spark_tile(option["col"], option["row"]):
+			return option
+
+	var escape := {}
+	var best_degree := -1
+	for neighbor in neighbors:
+		var degree := _spark_neighbors(neighbor["col"], neighbor["row"]).size()
+		if degree > best_degree:
+			best_degree = degree
+			escape = neighbor
+	if not escape.is_empty():
+		return escape
 	return {"col": spark["col"], "row": spark["row"]}
+
+
+func _rotate_direction(dir: Vector2i, turn_bias: int) -> Vector2i:
+	if turn_bias > 0:
+		return Vector2i(-dir.y, dir.x)
+	return Vector2i(dir.y, -dir.x)
+
+
+func _is_spark_tile(col: int, row: int) -> bool:
+	if not _inside(col, row):
+		return false
+	return grid[row][col] == TILE_TRAIL or _is_rail_tile(col, row)
+
+
+func _build_corner_rail_reachable() -> Array:
+	var reachable := []
+	for row in range(ROWS):
+		var line := []
+		for _col in range(COLS):
+			line.append(false)
+		reachable.append(line)
+
+	var seeds := []
+	for cell in [{"col": 0, "row": 0}, {"col": COLS - 1, "row": 0}]:
+		if _is_rail_tile(cell["col"], cell["row"]):
+			reachable[cell["row"]][cell["col"]] = true
+			seeds.append(cell)
+
+	var cursor := 0
+	while cursor < seeds.size():
+		var current = seeds[cursor]
+		cursor += 1
+		for neighbor in _spark_neighbors(current["col"], current["row"]):
+			if reachable[neighbor["row"]][neighbor["col"]]:
+				continue
+			if not _is_rail_tile(neighbor["col"], neighbor["row"]):
+				continue
+			reachable[neighbor["row"]][neighbor["col"]] = true
+			seeds.append(neighbor)
+	return reachable
+
+
+func _reset_trapped_sparks() -> void:
+	var corner_reachable := _build_corner_rail_reachable()
+	for spark in sparks:
+		if not _is_spark_tile(spark["col"], spark["row"]):
+			_spawn_sparks()
+			return
+		if not corner_reachable[spark["row"]][spark["col"]]:
+			_spawn_sparks()
+			return
 
 
 func _update_pickups(delta: float) -> void:
@@ -950,12 +1117,19 @@ func _lose_life(reason: String) -> void:
 
 
 func _clear_trail() -> void:
+	var reset_sparks := false
+	for spark in sparks:
+		if _inside(spark["col"], spark["row"]) and grid[spark["row"]][spark["col"]] == TILE_TRAIL:
+			reset_sparks = true
+			break
 	for point in player["trail"]:
 		if grid[point["row"]][point["col"]] == TILE_TRAIL:
 			grid[point["row"]][point["col"]] = TILE_EMPTY
 	player["drawing"] = false
 	player["trail"].clear()
 	player["trail_keys"].clear()
+	if reset_sparks:
+		_spawn_sparks()
 
 
 func _spawn_capture_fx(claimed: int) -> void:
@@ -1022,26 +1196,56 @@ func _update_floaters(delta: float) -> void:
 
 
 func _drop_enemy_residue(enemy: Dictionary) -> void:
-	var points := [Vector2(enemy["x"], enemy["y"])]
+	var points := [{"point": Vector2(enemy["x"], enemy["y"]), "intensity": 0.74}]
 	var segments := _qix_segments(enemy)
 	for segment in segments:
-		points.append(segment["a"])
-		points.append(segment["b"])
-	for point in points:
+		points.append({"point": segment["a"], "intensity": 0.52})
+		points.append({"point": segment["b"], "intensity": 0.52})
+	var seen := {}
+	for sample in points:
+		var point: Vector2 = sample["point"]
 		var col: int = clamp(int((point.x - BOARD_RECT.position.x) / CELL), 1, COLS - 2)
 		var row: int = clamp(int((point.y - BOARD_RECT.position.y) / CELL), 1, ROWS - 2)
+		var key := _tile_key(col, row)
+		if seen.has(key):
+			continue
+		seen[key] = true
 		if grid[row][col] != TILE_EMPTY:
 			continue
-		enemy_residue.append(
-			{
-				"pos": _cell_center(col, row),
-				"hue": enemy["hue"],
-				"life": 1.1,
-				"max_life": 1.1
-			}
-		)
-	while enemy_residue.size() > 180:
+		var existing := _enemy_residue_at(col, row)
+		if existing.is_empty():
+			enemy_residue.append(
+				{
+					"col": col,
+					"row": row,
+					"pos": _cell_center(col, row),
+					"hue": enemy["hue"],
+					"intensity": sample["intensity"],
+					"life": ENEMY_RESIDUE_LIFE,
+					"max_life": ENEMY_RESIDUE_LIFE
+				}
+			)
+			continue
+		existing["hue"] = enemy["hue"]
+		existing["intensity"] = clamp(max(float(existing.get("intensity", 0.4)), float(sample["intensity"])) + 0.08, 0.4, 1.0)
+		existing["life"] = ENEMY_RESIDUE_LIFE
+		existing["max_life"] = ENEMY_RESIDUE_LIFE
+	while enemy_residue.size() > ENEMY_RESIDUE_MAX:
 		enemy_residue.pop_front()
+
+
+func _enemy_residue_at(col: int, row: int) -> Dictionary:
+	for residue in enemy_residue:
+		if residue["col"] == col and residue["row"] == row:
+			return residue
+	return {}
+
+
+func _residue_hits_trail() -> bool:
+	for point in player["trail"]:
+		if not _enemy_residue_at(point["col"], point["row"]).is_empty():
+			return true
+	return false
 
 
 func _update_enemy_residue(delta: float) -> void:
@@ -1070,6 +1274,13 @@ func _player_position() -> Vector2:
 
 func _cell_center(col: int, row: int) -> Vector2:
 	return BOARD_RECT.position + Vector2(col * CELL + CELL * 0.5, row * CELL + CELL * 0.5)
+
+
+func _point_to_cell(point: Vector2) -> Dictionary:
+	return {
+		"col": clamp(int((point.x - BOARD_RECT.position.x) / CELL), 0, COLS - 1),
+		"row": clamp(int((point.y - BOARD_RECT.position.y) / CELL), 0, ROWS - 1)
+	}
 
 
 func _cell_rect(col: int, row: int) -> Rect2:
@@ -1197,6 +1408,21 @@ func _build_grain_texture() -> void:
 			var alpha := rng.randf_range(0.04, 0.18)
 			image.set_pixel(x, y, Color(shade, shade, shade, alpha))
 	grain_texture = ImageTexture.create_from_image(image)
+
+
+func _draw_claimed_reveal_tile(tile_rect: Rect2, col: int, row: int) -> void:
+	if current_background_gray == null:
+		return
+	var texture_size := current_background_gray.get_size()
+	if texture_size.x <= 0.0 or texture_size.y <= 0.0:
+		return
+	var region := Rect2(
+		Vector2(float(col) / float(COLS) * texture_size.x, float(row) / float(ROWS) * texture_size.y),
+		Vector2(texture_size.x / float(COLS), texture_size.y / float(ROWS))
+	)
+	draw_texture_rect_region(current_background_gray, tile_rect, region, Color(1, 1, 1, 0.92))
+	if grain_texture != null:
+		draw_texture_rect(grain_texture, tile_rect, true, Color(1, 1, 1, 0.18))
 
 
 func _build_audio() -> void:
@@ -1352,6 +1578,10 @@ func _pool_label(pool: String) -> String:
 			return "Pinup"
 		_:
 			return "Random"
+
+
+func _is_level_clear_continue_event(event: InputEvent) -> bool:
+	return event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE
 
 
 func _options_visible() -> bool:
@@ -1623,8 +1853,9 @@ func _draw_board() -> void:
 						if (col + row) % 2 == 0:
 							draw_rect(rect.grow(-3.0), Color(1, 1, 1, 0.014), true)
 					TILE_SAFE:
+						_draw_claimed_reveal_tile(rect, col, row)
 						var claim_color := _theme_color("claim_fill")
-						claim_color.a = 0.03
+						claim_color.a = 0.02
 						draw_rect(rect, claim_color, true)
 						draw_rect(rect.grow(-1.0), _with_alpha(_theme_color("rail"), 0.16), false, 1.0)
 						draw_rect(Rect2(rect.position + Vector2(2.0, 2.0), Vector2(rect.size.x - 4.0, 2.0)), _with_alpha(Color.WHITE, 0.04), true)
@@ -1697,28 +1928,24 @@ func _draw_enemies() -> void:
 		var history: Array = enemy["history"]
 		if history.is_empty():
 			history = [{"x": enemy["x"], "y": enemy["y"], "angle": enemy["angle"]}]
-		var comet_points := PackedVector2Array()
-		for ghost in history:
-			comet_points.append(Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.6)
 		var trail_a := Color.from_hsv(enemy["hue"], 0.74, 1.0, 1.0)
-		var trail_b := Color.from_hsv(fmod(enemy["hue"] + 0.16, 1.0), 0.58, 1.0, 1.0)
-		for index in range(comet_points.size() - 1):
-			var alpha_tail := 1.0 - float(index) / float(max(1, comet_points.size() - 1))
-			var tail_color := trail_a.lerp(trail_b, float(index % 5) / 4.0)
-			draw_line(comet_points[index], comet_points[index + 1], _with_alpha(tail_color, alpha_tail * 0.42), 14.0 * alpha_tail + 1.8)
-			draw_line(comet_points[index], comet_points[index + 1], _with_alpha(Color.WHITE, alpha_tail * 0.12), 3.6 * alpha_tail + 0.8)
+		var trail_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, 1.0)
 		for index in range(history.size() - 1, -1, -1):
 			var ghost = history[index]
-			var alpha: float = float(index + 1) / float(history.size() + 1)
-			var glow := Color.from_hsv(enemy["hue"], 0.72, 1.0, alpha * 0.1)
-			var glow_b := Color.from_hsv(fmod(enemy["hue"] + 0.33, 1.0), 0.66, 1.0, alpha * 0.08)
+			var alpha: float = 0.18 + (float(history.size() - index) / float(max(1, history.size()))) * 0.72
 			var a_dir := Vector2(cos(ghost["angle"]), sin(ghost["angle"]))
 			var b_dir := Vector2(cos(ghost["angle"] + PI * 0.5), sin(ghost["angle"] + PI * 0.5))
 			var center := Vector2(ghost["x"], ghost["y"]) + camera_offset * 0.7
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(glow, glow.a * 0.85), 5.6)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(glow_b, glow_b.a * 0.82), 4.4)
-			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], glow, 2.4)
-			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], glow_b, 2.0)
+			draw_line(center - a_dir * enemy["arm_a"], center + a_dir * enemy["arm_a"], _with_alpha(trail_a, alpha), 3.0 if index == 0 else 2.0)
+			draw_line(center - b_dir * enemy["arm_b"], center + b_dir * enemy["arm_b"], _with_alpha(trail_b, alpha), 3.0 if index == 0 else 2.0)
+
+		for index in range(history.size() - 1):
+			var current := Vector2(history[index]["x"], history[index]["y"]) + camera_offset * 0.6
+			var next := Vector2(history[index + 1]["x"], history[index + 1]["y"]) + camera_offset * 0.6
+			var alpha_tail := 1.0 - float(index) / float(max(1, history.size() - 1))
+			var tail_color := trail_a.lerp(trail_b, float(index % 5) / 4.0)
+			draw_line(current, next, _with_alpha(tail_color, alpha_tail * 0.42), 14.0 * alpha_tail + 1.8)
+			draw_line(current, next, _with_alpha(Color.WHITE, alpha_tail * 0.12), 3.6 * alpha_tail + 0.8)
 
 		var center_now := Vector2(enemy["x"], enemy["y"]) + camera_offset
 		var segments := _qix_segments(enemy)
@@ -1749,13 +1976,18 @@ func _draw_sparks() -> void:
 		for index in range(0, history.size() - 1):
 			var current = history[index]
 			var next = history[index + 1]
-			var alpha: float = 0.18 + (float(history.size() - index) / float(history.size())) * (0.28 + menace * 0.3)
+			var tail_weight := float(history.size() - index) / float(max(1, history.size()))
+			var alpha: float = 0.18 + tail_weight * (0.28 + menace * 0.3)
+			var current_pos := _cell_center(current["col"], current["row"]) + camera_offset * 0.82
+			var next_pos := _cell_center(next["col"], next["row"]) + camera_offset * 0.82
 			draw_line(
-				_cell_center(current["col"], current["row"]) + camera_offset * 0.82,
-				_cell_center(next["col"], next["row"]) + camera_offset * 0.82,
+				current_pos,
+				next_pos,
 				_with_alpha(Color("ffb884"), alpha),
 				1.1 + menace * 0.4
 			)
+			draw_line(current_pos, next_pos, _with_alpha(Color("fff2c7"), alpha * 0.34), 0.65 + menace * 0.2)
+			draw_circle(current_pos, (1.8 + menace * 0.8) * tail_weight, _with_alpha(Color("ffd9b8"), alpha * 0.28))
 		draw_circle(body_pos, 9.0 * scale, _with_alpha(Color("ff7050"), 0.26 + menace * 0.18))
 		var leg_swing: float = sin(phase) * 2.0
 		var body_dark := Color("2b0e0a")
@@ -1809,14 +2041,17 @@ func _draw_pickups() -> void:
 
 func _draw_enemy_residue() -> void:
 	for residue in enemy_residue:
-		var alpha: float = float(residue["life"]) / float(residue["max_life"])
+		var intensity: float = float(residue.get("intensity", 0.64))
+		var alpha: float = intensity * float(residue["life"]) / float(residue["max_life"])
 		var hue: float = residue["hue"]
 		var center: Vector2 = residue["pos"] + camera_offset * 0.36
-		var glow := Color.from_hsv(fmod(hue + 0.08, 1.0), 0.7, 1.0, alpha * 0.2)
-		var cross := Color.from_hsv(fmod(hue + 0.2, 1.0), 0.55, 1.0, alpha * 0.56)
-		draw_circle(center, 8.0 * alpha + 2.0, glow)
-		draw_line(center + Vector2(-3.4, 0.0), center + Vector2(3.4, 0.0), cross, 1.2)
-		draw_line(center + Vector2(0.0, -3.4), center + Vector2(0.0, 3.4), cross, 1.2)
+		var glow := Color.from_hsv(fmod(hue + 0.08, 1.0), 0.7, 1.0, alpha * 0.55)
+		var glow_mid := Color.from_hsv(fmod(hue + 0.14, 1.0), 0.78, 1.0, alpha * 0.32)
+		var cross := Color.from_hsv(fmod(hue + 0.26, 1.0), 0.55, 1.0, alpha * 0.7)
+		draw_circle(center, 6.0 + intensity * 4.0, glow)
+		draw_circle(center, 2.4 + intensity * 1.8, glow_mid)
+		draw_line(center + Vector2(-3.4, 0.0), center + Vector2(3.4, 0.0), cross, 1.2 + intensity * 0.3)
+		draw_line(center + Vector2(0.0, -3.4), center + Vector2(0.0, 3.4), cross, 1.2 + intensity * 0.3)
 
 
 func _draw_particles() -> void:
